@@ -252,3 +252,43 @@ class BinanceFuturesExchange:
             raise ImportError(
                 "实盘交易需要安装 requests：\n  pip install requests"
             )
+
+
+    # ── User Data Stream ──────────────────────────────────────────────────────
+
+    def create_listen_key(self) -> str:
+        """
+        POST /fapi/v1/listenKey
+        获取用户数据流 listenKey（有效期 60 分钟）。
+        """
+        resp = self._signed_post("/fapi/v1/listenKey", {})
+        key = resp["listenKey"]
+        log.info("listenKey 已创建（60 分钟有效）")
+        return key
+
+    def keepalive_listen_key(self, listen_key: str) -> None:
+        """
+        PUT /fapi/v1/listenKey
+        续期 listenKey（每 30 分钟调用一次）。
+        """
+        self._signed_put("/fapi/v1/listenKey", {"listenKey": listen_key})
+        log.debug("listenKey 已续期")
+
+    def close_listen_key(self, listen_key: str) -> None:
+        """DELETE /fapi/v1/listenKey — 主动关闭数据流。"""
+        try:
+            self._signed_delete("/fapi/v1/listenKey", {"listenKey": listen_key})
+        except Exception:
+            pass
+
+    def _signed_put(self, path: str, params: dict) -> dict:
+        params = {**params, "timestamp": self._ts()}
+        params["signature"] = self._sign(params)
+        resp = self._session.put(self._base + path, params=params)
+        return self._check(resp)
+
+    def _signed_delete(self, path: str, params: dict) -> dict:
+        params = {**params, "timestamp": self._ts()}
+        params["signature"] = self._sign(params)
+        resp = self._session.delete(self._base + path, params=params)
+        return self._check(resp)

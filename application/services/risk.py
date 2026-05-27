@@ -75,11 +75,23 @@ class RiskService:
         is_reducing  = delta < 0
         order_side   = Side.SELL if is_reducing else Side.BUY
 
+        # 减仓时，将数量限制在已知持仓范围内，
+        # 防止因缺少 FillEvent 回调导致仓位记录滞后时超量下单（-2022）。
+        order_qty = instrument.round_qty(abs(delta))
+        if is_reducing:
+            cur_pos  = self._account.get_position(
+                event.account_id, instrument.symbol)
+            cur_size = cur_pos.size if cur_pos else Decimal(0)
+            order_qty = instrument.round_qty(min(order_qty, cur_size))
+            if order_qty < instrument.lot_size:
+                log.debug("reduce_only qty capped to 0, skip: %s", instrument.symbol)
+                return
+
         order = Order(
             instrument  = instrument,
             account_id  = event.account_id,
-            side        = order_side,   # ← delta 符号，非 target_side
-            qty         = instrument.round_qty(abs(delta)),
+            side        = order_side,
+            qty         = order_qty,
             order_type  = OrderType.MARKET,
             strategy_id = "",
             limit_price = price,

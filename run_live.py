@@ -180,13 +180,15 @@ def main() -> None:
     feed = BinanceWsFeed(
         bus         = system.bus,
         instruments = instruments,
-        testnet=True
+        testnet=True,
     )
 
     # ── 优雅退出 ──────────────────────────────────────────────────────────────
     def shutdown(sig, frame):
         log.info("\n收到停止信号，执行日终对账后退出...")
         feed.stop()
+        if user_data_stream:
+            user_data_stream.stop()
 
         from application.services.reconcile import ReconcileService
         reconciler = ReconcileService(
