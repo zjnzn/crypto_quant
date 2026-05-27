@@ -125,7 +125,9 @@ class MonitorService:
                 title  = "风控拦截",
                 detail = {
                     "account": event.account_id,
-                    "symbol":  event.instrument.symbol if event.instrument else "",
+                    "symbol":  (event.order.instrument.symbol
+                          if event.order and event.order.instrument
+                          else ""),
                     "reason":  event.reason,
                 },
             ).caused_by(event))

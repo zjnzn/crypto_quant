@@ -32,24 +32,28 @@ log = logging.getLogger(__name__)
 class PortfolioService:
     def __init__(
         self,
-        bus:         EventBusPort,
-        cache:       CachePort,
-        account:     AccountPort,
-        account_id:  str,
-        max_weight:  float = 0.10,
-        min_score:   float = 0.15,
-        allow_short: bool  = True,
+        bus:            EventBusPort,
+        cache:          CachePort,
+        account:        AccountPort,
+        account_id:     str,
+        max_weight:     float = 0.10,
+        min_score:      float = 0.15,
+        allow_short:    bool  = True,
+        order_cooldown: float = 0.0,   # 两次同标的下单最小间隔（秒）
     ) -> None:
         self._bus        = bus
         self._cache      = cache
         self._account    = account
         self._account_id = account_id
-        self._max_weight = Decimal(str(max_weight))
-        self._min_score  = min_score
-        self._allow_short = allow_short
+        self._max_weight     = Decimal(str(max_weight))
+        self._min_score      = min_score
+        self._allow_short    = allow_short
+        self._order_cooldown = order_cooldown
 
         # (symbol, strategy_id) → SignalEvent
         self._signals: dict[tuple[str, str], SignalEvent] = {}
+        # 每个标的最后一次下单的单调时钟时间（防止重复下单）
+        self._last_order_ts: dict[str, float] = {}
 
         bus.subscribe(SignalEvent, self._on_signal)
         log.info("PortfolioService 启动  max_weight=%.0f%%  min_score=%.2f  short=%s",
@@ -112,6 +116,16 @@ class PortfolioService:
         delta = abs(target_size - current_size)
         if delta < event.instrument.lot_size:
             return
+
+        # ── 下单冷却（防止填单前重复提交）────────────────────────────────────
+        import time as _time
+        if self._order_cooldown > 0:
+            last_ts = self._last_order_ts.get(sym, 0.0)
+            if _time.monotonic() - last_ts < self._order_cooldown:
+                log.debug("portfolio cooldown: %s 跳过（距上次下单 < %.0fs）",
+                          sym, self._order_cooldown)
+                return
+            self._last_order_ts[sym] = _time.monotonic()
 
         self._bus.publish(
             TargetPositionEvent(
