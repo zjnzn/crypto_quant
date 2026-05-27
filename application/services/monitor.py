@@ -269,3 +269,33 @@ class MonitorService:
             "losses":          self._losses,
             "daily_pnl":       self.daily_pnl,
         }
+
+    def reset_baseline(self) -> None:
+        """
+        重置监控基准为当前真实净值。
+
+        必须在实盘启动检查（rebuild_from_exchange）之后调用，
+        否则 MonitorService 会用 config 里的 initial_usdt 作基准，
+        而实际账户余额可能与配置值差距很大（例如 testnet 赠送资金）。
+
+        调用时机：
+          system = build(cfg)
+          startup_checks(system, instruments)   # 同步真实余额
+          system.monitor.reset_baseline()        # ← 必须在此调用
+          feed.start()
+        """
+        actual_nav           = self.nav
+        self._initial_nav    = actual_nav
+        self._high_watermark = actual_nav
+        self._prev_nav       = actual_nav
+        self._realized_pnl   = Decimal(0)
+        self._returns.clear()
+        self._wins = self._losses = self._breakeven = 0
+        self._daily_pnl.clear()
+        self._last_alert_dd  = Decimal(0)
+        self._max_drawdown   = Decimal(0)
+        # 清除回撤缓存，避免 RiskService 读到旧值
+        self._cache.delete(f"drawdown:{self._account_id}")
+        log.info("MonitorService 基准重置 → %.2f USDT（实际账户净值）",
+                 float(actual_nav))
+

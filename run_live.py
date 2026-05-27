@@ -168,6 +168,11 @@ def main() -> None:
     if cfg.execution.exchange != "paper":
         if not startup_checks(system, instruments):
             sys.exit(1)
+        # ★ 启动检查会把真实账户余额同步进 AccountService，
+        #   此时必须重置监控基准，否则 P&L 计算会用 config 里的
+        #   initial_usdt（如 10000）而非真实余额（如 86373）作为基准。
+        system.monitor.reset_baseline()
+        log.info("监控基准已重置为实际账户净值")
 
     # ── 启动 WebSocket 行情 ───────────────────────────────────────────────────
     from adapters.feed.websocket import BinanceWsFeed
@@ -175,6 +180,7 @@ def main() -> None:
     feed = BinanceWsFeed(
         bus         = system.bus,
         instruments = instruments,
+        testnet=True
     )
 
     # ── 优雅退出 ──────────────────────────────────────────────────────────────

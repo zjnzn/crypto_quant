@@ -50,13 +50,19 @@ class BinanceWsFeed:
     """
 
     # Binance USDT-M Futures WebSocket
-    WS_BASE = "wss://fstream.binance.com/stream"
+    WS_BASE_FUTURES_LIVE = "wss://fstream.binance.com/stream"
+    WS_BASE_FUTURES_TEST = "wss://stream.testnet.binance.vision/stream"
+    # Binance Spot WebSocket
+    WS_BASE_SPOT_LIVE = "wss://stream.binance.com:9443/stream"
+    WS_BASE_SPOT_TEST = "wss://testnet.binance.vision/stream"
 
     def __init__(
         self,
-        bus:         EventBusPort,
-        instruments: dict[str, Instrument],  # binance_symbol_lower → Instrument
-        ws_factory:  WsFactory | None = None,
+        bus:          EventBusPort,
+        instruments:  dict[str, Instrument],  # binance_symbol_lower → Instrument
+        market_type:  str  = "futures",       # "futures" | "spot"
+        testnet:      bool = False,
+        ws_factory:   WsFactory | None = None,
     ) -> None:
         self._bus         = bus
         self._instruments = {k.lower(): v for k, v in instruments.items()}
@@ -64,6 +70,11 @@ class BinanceWsFeed:
         self._queue:       queue.Queue = queue.Queue(maxsize=10_000)
         self._running      = False
         self._thread:      threading.Thread | None = None
+        # 根据 market_type 和 testnet 选取正确的 WebSocket 地址
+        if market_type == "spot":
+            self._ws_base = self.WS_BASE_SPOT_TEST if testnet else self.WS_BASE_SPOT_LIVE
+        else:
+            self._ws_base = self.WS_BASE_FUTURES_TEST if testnet else self.WS_BASE_FUTURES_LIVE
 
     # ── 公开 API ──────────────────────────────────────────────────────────────
 
@@ -120,7 +131,7 @@ class BinanceWsFeed:
         streams = "/".join(
             f"{s}@aggTrade/{s}@bookTicker" for s in symbols
         )
-        return f"{self.WS_BASE}?streams={streams}"
+        return f"{self._ws_base}?streams={streams}"
 
     def _ws_worker(self, url: str) -> None:
         """后台线程：建立 WS 连接，收到消息放入 queue。"""
