@@ -1,0 +1,53 @@
+# config_live.yaml
+# 实盘交易配置模板
+# 复制此文件为 config_live.yaml 并填入真实凭证
+
+mode: live   # "backtest" | "paper" | "live"
+             # paper = Binance testnet（不花真钱）
+             # live  = Binance 真实环境
+
+bus:
+  backend: sync          # "sync"（单进程）| "kafka"（多进程）
+
+cache:
+  backend: redis         # "memory"（回测）| "redis"（生产）
+  redis_host: localhost
+  redis_port: 6379
+
+execution:
+  exchange: binance      # "paper" | "binance" | "okx"
+  api_key:    "YOUR_BINANCE_API_KEY_HERE"
+  api_secret: "YOUR_BINANCE_API_SECRET_HERE"
+
+account:
+  main_id: main
+  initial_usdt: 10000.0  # 仅用于回测初始化，实盘从交易所拉取
+
+risk:
+  max_weight:       0.10    # 单标的最大仓位权重
+  max_leverage:     5       # 全局最大杠杆（实盘建议保守）
+  max_drawdown:     0.05    # 5% 回撤熔断
+  max_funding_rate: 0.003   # 0.3%/8h 资金费率上限
+
+monitor:
+  warn_drawdown:     0.03   # 3% 告警
+  critical_drawdown: 0.05   # 5% 熔断
+
+strategies:
+  - module: "strategies.momentum.MomentumStrategy"
+    params:
+      window:    20
+      scale:     0.05
+      min_score: 0.20     # 实盘信号阈值适当提高
+
+  - module: "strategies.mean_reversion.MeanReversionStrategy"
+    params:
+      window:      20
+      z_entry:     2.0    # 实盘 Z-score 阈值更保守
+      z_threshold: 3.0
+
+  - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
+    params:
+      min_rate:      0.001
+      max_rate:      0.005
+      cooldown_bars: 8
