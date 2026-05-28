@@ -212,17 +212,23 @@ class BinanceFuturesExchange:
     def _signed_post(self, path: str, params: dict) -> dict:
         params["timestamp"] = self._ts()
         params["signature"] = self._sign(params)
-        resp = self._session.post(self._base + path, params=params)
+        url = self._base + path
+        log.info("POST %s", url)
+        resp = self._session.post(url, params=params)
         return self._check(resp)
 
     def _signed_get(self, path: str, params: dict) -> Any:
         params["timestamp"] = self._ts()
         params["signature"] = self._sign(params)
-        resp = self._session.get(self._base + path, params=params)
+        url = self._base + path
+        log.info("GET %s", url)
+        resp = self._session.get(url, params=params)
         return self._check(resp)
 
     def _get(self, path: str, params: dict) -> Any:
-        resp = self._session.get(self._base + path, params=params)
+        url = self._base + path
+        log.info("GET %s", url)
+        resp = self._session.get(url, params=params)
         return self._check(resp)
 
     def _sign(self, params: dict) -> str:
@@ -284,11 +290,15 @@ class BinanceFuturesExchange:
     def _signed_put(self, path: str, params: dict) -> dict:
         params = {**params, "timestamp": self._ts()}
         params["signature"] = self._sign(params)
-        resp = self._session.put(self._base + path, params=params)
+        url = self._base + path
+        log.info("PUT %s", url)
+        resp = self._session.put(url, params=params)
         return self._check(resp)
 
     def _signed_delete(self, path: str, params: dict) -> dict:
         params = {**params, "timestamp": self._ts()}
         params["signature"] = self._sign(params)
-        resp = self._session.delete(self._base + path, params=params)
+        url = self._base + path
+        log.info("DELETE %s", url)
+        resp = self._session.delete(url, params=params)
         return self._check(resp)
