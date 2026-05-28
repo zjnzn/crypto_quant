@@ -53,7 +53,7 @@ class BinanceWsFeed:
     """
 
     # Binance USDT-M Futures WebSocket
-    WS_BASE_FUTURES_LIVE = "wss://fstream.binance.com/stream"
+    WS_BASE_FUTURES_LIVE = "wss://dstream.binance.com"
     WS_BASE_FUTURES_TEST = "wss://stream.testnet.binance.vision/stream"
     # Binance Spot WebSocket
     WS_BASE_SPOT_LIVE = "wss://stream.binance.com:9443/stream"
@@ -143,8 +143,8 @@ class BinanceWsFeed:
         直接注入原始消息并立即发布到总线（测试专用）。
         绕过后台线程和队列，适合在单元测试中同步验证事件。
         """
-        events = self._parse(raw_msg)
-        for event in events:
+        event = self._parse(raw_msg)
+        if event:
             self._bus.publish(event)   # 直接发布，不走队列
 
     # ── 内部 ──────────────────────────────────────────────────────────────────
@@ -160,7 +160,8 @@ class BinanceWsFeed:
         """后台线程：建立 WS 连接，收到消息放入 queue。"""
         def on_message(ws, msg):
             try:
-                for event in self._parse(msg):
+                event = self._parse(msg)
+                if event:
                     self._queue.put_nowait(event)
             except queue.Full:
                 log.warning("WS queue 已满，丢弃消息")
@@ -178,12 +179,9 @@ class BinanceWsFeed:
 
         self._ws_factory(url, on_message, on_error, on_close)
 
-    def _parse(self, raw: str) -> list[TradeEvent | BookEvent]:
+    def _parse(self, raw: str) -> TradeEvent | BookEvent | None:
         """
         解析 Binance combined stream 消息。
-
-        aggTrade → [TradeEvent]
-        bookTicker → [BookEvent, TradeEvent]（从盘口推导成交）
 
         aggTrade 格式：
           {"stream":"btcusdt@aggTrade","data":{"e":"aggTrade","s":"BTCUSDT","p":"65000","q":"0.01",...}}
@@ -198,44 +196,30 @@ class BinanceWsFeed:
             sym_lower  = data.get("s", "").lower()
             instrument = self._instruments.get(sym_lower)
             if instrument is None:
-                return []
+                return None
 
             ts = datetime.now(tz=timezone.utc)
 
             if event_type == "aggTrade":
-                return [TradeEvent(
+                return TradeEvent(
                     ts          = ts,
                     instrument  = instrument,
                     price       = Decimal(data["p"]),
                     qty         = Decimal(data["q"]),
                     buyer_maker = bool(data.get("m", False)),
-                )]
+                )
             elif event_type == "bookTicker":
-                bid_price = Decimal(data["b"])
-                bid_qty   = Decimal(data["B"])
-                ask_price = Decimal(data["a"])
-                ask_qty   = Decimal(data["A"])
-                mid_price = (bid_price + ask_price) / 2
-                return [
-                    BookEvent(
-                        ts         = ts,
-                        instrument = instrument,
-                        bid_price  = bid_price,
-                        bid_qty    = bid_qty,
-                        ask_price  = ask_price,
-                        ask_qty    = ask_qty,
-                    ),
-                    TradeEvent(
-                        ts          = ts,
-                        instrument  = instrument,
-                        price       = mid_price,
-                        qty         = min(bid_qty, ask_qty),
-                        buyer_maker = bid_qty < ask_qty,
-                    ),
-                ]
+                return BookEvent(
+                    ts          = ts,
+                    instrument  = instrument,
+                    bid_price   = Decimal(data["b"]),
+                    bid_qty     = Decimal(data["B"]),
+                    ask_price   = Decimal(data["a"]),
+                    ask_qty     = Decimal(data["A"]),
+                )
         except (KeyError, ValueError):
             log.debug("无法解析 WS 消息: %s", raw[:100])
-        return []
+        return None
 
     @staticmethod
     def _default_ws_factory(url, on_message, on_error, on_close) -> None:
