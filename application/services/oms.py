@@ -16,10 +16,15 @@ application/services/oms.py
 缓存键（重启安全）：
   order:{order_id}       → Order 对象
   exorder:{exchange_id}  → order_id（反查映射）
+
+In-flight 追踪：
+  _pending_orders 维护当前在途订单（status.is_active），
+  RiskService 通过 get_open_orders() 获取，防止超量下单。
 """
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import timedelta
 from decimal import Decimal
 
@@ -52,6 +57,8 @@ class OMSService:
         self._bus      = bus
         self._exchange = exchange
         self._cache    = cache
+        self._pending: dict[str, Order] = {}   # order_id → active Order
+        self._lock     = threading.RLock()
 
         bus.subscribe(RiskApprovedEvent, self._on_approved)
         bus.subscribe(FillEvent,         self._on_fill)
@@ -66,28 +73,36 @@ class OMSService:
         # ① 先写缓存（重启安全）
         self._cache.set(f"order:{order.id}", order, ttl=_ORDER_TTL)
 
-        # ② 提交到交易所
+        # ② 加入 pending（供 RiskService 查询在途订单）
+        with self._lock:
+            self._pending[order.id] = order
+
+        # ③ 提交到交易所
         try:
             exchange_id = self._exchange.submit(order)
         except Exception:
             log.exception("提交订单失败: %s", order.id)
             rejected = order.with_update(status=OrderStatus.REJECTED)
             self._cache.set(f"order:{order.id}", rejected, ttl=_ORDER_TTL)
+            with self._lock:
+                self._pending.pop(order.id, None)
             return
 
-        # ③ 注册 exorder 反查映射（必须在 OrderSubmittedEvent 发布之前）
+        # ④ 注册 exorder 反查映射（必须在 OrderSubmittedEvent 发布之前）
         #    因为 PaperExchange 会在 OrderSubmittedEvent 触发时立即发布 FillEvent，
         #    OMS.on_fill 需要此映射来定位订单。
         self._cache.set(f"exorder:{exchange_id}", order.id, ttl=_ORDER_TTL)
 
-        # ④ 更新订单状态为 SUBMITTED
+        # ⑤ 更新订单状态为 SUBMITTED
         submitted = order.with_update(
             status=OrderStatus.SUBMITTED,
             exchange_order_id=exchange_id,
         )
         self._cache.set(f"order:{order.id}", submitted, ttl=_ORDER_TTL)
+        with self._lock:
+            self._pending[order.id] = submitted
 
-        # ⑤ 发布 OrderSubmittedEvent
+        # ⑥ 发布 OrderSubmittedEvent
         #    （PaperExchange 会在此处理函数内同步发布 FillEvent）
         self._bus.publish(
             OrderSubmittedEvent(
@@ -133,6 +148,13 @@ class OMSService:
         )
         self._cache.set(f"order:{order_id}", updated, ttl=_ORDER_TTL)
 
+        # 更新 pending：终态移除，否则更新
+        with self._lock:
+            if new_status.is_terminal:
+                self._pending.pop(order_id, None)
+            else:
+                self._pending[order_id] = updated
+
         log.debug("order fill  %s  filled=%.4f/%.4f  avg=%.2f  status=%s",
                   order_id[:8], new_filled, order.qty,
                   new_avg, new_status.value)
@@ -145,6 +167,20 @@ class OMSService:
                     commission=event.commission,
                 ).caused_by(event)
             )
+
+    # ── 在途订单查询（供 RiskService 使用）────────────────────────────────────
+
+    def get_open_orders(self, symbol: str | None = None) -> list[Order]:
+        """
+        返回当前在途订单列表（status.is_active）。
+        symbol=None → 返回所有在途订单。
+        symbol="ETH-USDT-PERP" → 只返回该标的的在途订单。
+        """
+        with self._lock:
+            orders = list(self._pending.values())
+        if symbol is not None:
+            orders = [o for o in orders if o.instrument.symbol == symbol]
+        return orders
 
     # ── 查询接口（测试 / 监控用）─────────────────────────────────────────────
 

@@ -7,6 +7,7 @@ WebSocket 实时行情源。
   - 后台线程建立 WS 连接，将原始消息放入 queue.Queue
   - 主线程从 queue 取出并发布到 EventBus（保证总线线程安全）
   - ws_factory 参数可注入 Mock，测试时不需要真实网络连接
+  - 若设置了 user_data_stream，run() 也会从其 queue 中取 FillEvent
 
 目前支持：Binance USDT-M Futures 的 aggTrade + bookTicker 流
 
@@ -19,9 +20,10 @@ import json
 import logging
 import queue
 import threading
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Callable
+from typing import Callable, Optional
 
 from core.domain.instrument import Instrument
 from core.ports.bus import EventBusPort
@@ -43,6 +45,7 @@ class BinanceWsFeed:
         feed = BinanceWsFeed(
             bus=bus,
             instruments={"btcusdt": btc_perp, "ethusdt": eth_perp},
+            user_data_stream=uds,   # 可选：同时处理 FillEvent
         )
         feed.start()            # 启动后台 WS 线程
         feed.run(n_events=1000) # 主线程处理事件（阻塞）
@@ -58,11 +61,12 @@ class BinanceWsFeed:
 
     def __init__(
         self,
-        bus:          EventBusPort,
-        instruments:  dict[str, Instrument],  # binance_symbol_lower → Instrument
-        market_type:  str  = "futures",       # "futures" | "spot"
-        testnet:      bool = False,
-        ws_factory:   WsFactory | None = None,
+        bus:               EventBusPort,
+        instruments:       dict[str, Instrument],  # binance_symbol_lower → Instrument
+        market_type:       str  = "futures",       # "futures" | "spot"
+        testnet:           bool = False,
+        ws_factory:        WsFactory | None = None,
+        user_data_stream:  Optional[object] = None,  # BinanceUserDataStream
     ) -> None:
         self._bus         = bus
         self._instruments = {k.lower(): v for k, v in instruments.items()}
@@ -70,6 +74,7 @@ class BinanceWsFeed:
         self._queue:       queue.Queue = queue.Queue(maxsize=10_000)
         self._running      = False
         self._thread:      threading.Thread | None = None
+        self._uds          = user_data_stream
         # 根据 market_type 和 testnet 选取正确的 WebSocket 地址
         if market_type == "spot":
             self._ws_base = self.WS_BASE_SPOT_TEST if testnet else self.WS_BASE_SPOT_LIVE
@@ -101,7 +106,16 @@ class BinanceWsFeed:
         主线程阻塞处理事件。
         n_events=None → 无限循环直到 stop() 被调用。
         返回已处理事件数。
+
+        同时处理行情事件和用户数据流的 FillEvent。
         """
+        # 启动后台 WS 线程
+        self.start()
+
+        # 启动用户数据流（如果有）
+        if self._uds is not None:
+            self._uds.start()
+
         count = 0
         while self._running:
             try:
@@ -111,7 +125,16 @@ class BinanceWsFeed:
                 if n_events is not None and count >= n_events:
                     break
             except queue.Empty:
-                continue
+                pass
+
+            # 每轮循环也处理用户数据流的 FillEvent（非阻塞）
+            if self._uds is not None:
+                self._uds.drain(timeout=0.0)
+
+        # 停止用户数据流
+        if self._uds is not None:
+            self._uds.stop()
+
         log.info("BinanceWsFeed 处理了 %d 个事件", count)
         return count
 

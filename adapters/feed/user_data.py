@@ -5,10 +5,12 @@ Binance 用户数据流（User Data Stream）。
 
 职责：
   订阅交易所的私有 WebSocket 流，当真实订单成交时，
-  发布 FillEvent 到事件总线，触发 OMS → AccountService 更新仓位。
+  将 FillEvent 放入 queue，由主线程从 queue 取出并发布到事件总线。
 
-没有这个组件，实盘订单永远不会触发 FillEvent，
-AccountService 仓位一直停在初始状态，PortfolioService 会持续超量下单。
+设计要点（与 BinanceWsFeed 一致）：
+  - 后台线程建立 WS 连接，将原始消息解析后放入 queue.Queue
+  - 主线程调用 drain() 从 queue 取出并 bus.publish（保证总线线程安全）
+  - 避免后台线程直接 bus.publish 导致竞态条件
 
 协议：
   1. POST /fapi/v1/listenKey  → 获取一次性 key
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import threading
 import time
 from decimal import Decimal
@@ -59,7 +62,7 @@ class BinanceUserDataStream:
             testnet=True,
         )
         user_stream.start()   # 启动后台 WS + 续期线程
-        # ↑ 之后成交会自动触发 FillEvent → OMS → AccountService
+        # 主循环中定期调用 user_stream.drain() 发布成交事件
 
     停止：
         user_stream.stop()
@@ -78,6 +81,7 @@ class BinanceUserDataStream:
         self._ws_base     = _WS_TEST if testnet else _WS_LIVE
         self._listen_key: str | None = None
         self._running     = False
+        self._queue:      queue.Queue = queue.Queue(maxsize=1_000)
         self._ws_thread:  threading.Thread | None = None
         self._ka_thread:  threading.Thread | None = None
 
@@ -116,6 +120,23 @@ class BinanceUserDataStream:
         if self._listen_key:
             self._exchange.close_listen_key(self._listen_key)
         log.info("BinanceUserDataStream 停止")
+
+    def drain(self, timeout: float = 0.05) -> int:
+        """
+        从队列中取出所有待处理的 FillEvent 并发布到总线。
+        应在主线程的主循环中定期调用（与 BinanceWsFeed.run() 配合）。
+        timeout: 单次 queue.get 的超时秒数。
+        返回本轮处理的 FillEvent 数量。
+        """
+        count = 0
+        while True:
+            try:
+                event = self._queue.get(timeout=timeout)
+                self._bus.publish(event)
+                count += 1
+            except queue.Empty:
+                break
+        return count
 
     # ── WebSocket 工作线程 ────────────────────────────────────────────────────
 
@@ -212,16 +233,19 @@ class BinanceUserDataStream:
                      side.value, instrument.symbol,
                      filled_qty, fill_price, commission, comm_asset)
 
-            self._bus.publish(FillEvent(
-                exchange_order_id = exchange_order_id,
-                instrument        = instrument,
-                side              = side,
-                filled_qty        = filled_qty,
-                fill_price        = fill_price,
-                commission        = commission,
-                commission_asset  = comm_asset,
-                is_maker          = bool(is_maker),
-            ))
+            try:
+                self._queue.put_nowait(FillEvent(
+                    exchange_order_id = exchange_order_id,
+                    instrument        = instrument,
+                    side              = side,
+                    filled_qty        = filled_qty,
+                    fill_price        = fill_price,
+                    commission        = commission,
+                    commission_asset  = comm_asset,
+                    is_maker          = bool(is_maker),
+                ))
+            except queue.Full:
+                log.warning("用户数据流 queue 已满，丢弃 FillEvent")
 
         elif event_type == "ACCOUNT_UPDATE":
             # 可选：同步账户余额变化

@@ -156,8 +156,7 @@ def main() -> None:
 
         if state["feed"]:
             state["feed"].stop()
-        if state["user_data_stream"]:
-            state["user_data_stream"].stop()
+        # user_data_stream 由 feed.run() 统一管理启停
 
         from application.services.reconcile import ReconcileService
         reconciler = ReconcileService(
@@ -184,36 +183,36 @@ def main() -> None:
     signal.signal(signal.SIGINT,  shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    # ── 启动用户数据流（成交回报）────────────────────────────────────────────
+    # ── 创建用户数据流（成交回报）────────────────────────────────────────────
+    user_data_stream = None
     if cfg.execution.exchange == "binance":
         from adapters.feed.user_data import BinanceUserDataStream
         is_testnet = (cfg.mode == "paper")
-        uds = BinanceUserDataStream(
+        user_data_stream = BinanceUserDataStream(
             bus         = system.bus,
             exchange    = system.exchange,
             instruments = instruments,
             testnet     = is_testnet,
         )
-        uds.start()
-        state["user_data_stream"] = uds
-        log.info("用户数据流已启动（成交回报将触发 FillEvent）")
+        # 不再单独 start() — 由 BinanceWsFeed.run() 统一管理
+        log.info("用户数据流已配置（由行情主循环统一驱动）")
 
-    # ── 启动行情 WebSocket ────────────────────────────────────────────────────
+    # ── 启动行情 WebSocket（含用户数据流）─────────────────────────────────────
     from adapters.feed.websocket import BinanceWsFeed
     is_testnet = (cfg.mode == "paper")
 
     feed = BinanceWsFeed(
-        bus         = system.bus,
-        instruments = instruments,
-        market_type = "futures",
-        testnet     = is_testnet,
+        bus              = system.bus,
+        instruments      = instruments,
+        market_type      = "futures",
+        testnet          = is_testnet,
+        user_data_stream = user_data_stream,
     )
-    feed.start()
     state["feed"] = feed
 
     log.info("系统运行中，按 Ctrl+C 停止")
     try:
-        feed.run()
+        feed.run()    # 阻塞主线程，统一处理行情 + FillEvent
     except Exception as e:
         log.exception("系统异常: %s", e)
         shutdown(None, None)

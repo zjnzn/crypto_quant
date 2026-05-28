@@ -39,6 +39,11 @@ class RiskService:
 
     soft 级别拒绝：记录警告，仍发布 RiskApprovedEvent（策略可接受此风险）
     hard 级别拒绝：发布 RiskRejectedEvent，链路终止
+
+    OMS in-flight 追踪：
+      _build_context() 从 OMS 获取当前在途订单，
+      计入 RiskContext.open_orders，供 OpenOrdersLimitMiddleware 等使用，
+      防止在途订单未确认前重复下单导致超量。
     """
 
     def __init__(
@@ -47,15 +52,21 @@ class RiskService:
         pipeline: RiskPipeline,
         account:  AccountPort,
         cache:    CachePort,
+        oms:     object | None = None,  # OMSService（延迟注入，避免循环依赖）
     ) -> None:
         self._bus      = bus
         self._pipeline = pipeline
         self._account  = account
         self._cache    = cache
+        self._oms      = oms
 
         bus.subscribe(TargetPositionEvent, self._on_target)
         log.info("RiskService 启动，中间件: %s",
                  self._pipeline.middleware_names)
+
+    def set_oms(self, oms: object) -> None:
+        """延迟注入 OMS（container 中解决循环依赖）。"""
+        self._oms = oms
 
     def _on_target(self, event: TargetPositionEvent) -> None:
         instrument = event.instrument
@@ -82,6 +93,11 @@ class RiskService:
             cur_pos  = self._account.get_position(
                 event.account_id, instrument.symbol)
             cur_size = cur_pos.size if cur_pos else Decimal(0)
+            # ★ 扣除在途 SELL 单的 pending qty，防止超量下单
+            if self._oms is not None:
+                for pending in self._oms.get_open_orders(sym):
+                    if pending.side == Side.SELL:
+                        cur_size -= pending.remaining_qty
             order_qty = instrument.round_qty(min(order_qty, cur_size))
             if order_qty < instrument.lot_size:
                 log.debug("reduce_only qty capped to 0, skip: %s", instrument.symbol)
@@ -133,15 +149,17 @@ class RiskService:
     # ── 内部辅助 ──────────────────────────────────────────────────────────────
 
     def _build_context(self, account_id: str, symbol: str) -> RiskContext:
-        """从 cache + account 组装风控上下文。"""
+        """从 cache + account + OMS 组装风控上下文。"""
         nav = self._account.get_nav_usdt(account_id)
 
         # 当前持仓（Phase 2：account 存根始终返回 None）
         pos = self._account.get_position(account_id, symbol)
         positions = {symbol: pos} if pos else {}
 
-        # 在途订单（Phase 2：暂无 OMS，为空列表；Phase 3 从 cache 读取）
+        # ★ 在途订单：从 OMS 获取，替代原来的空列表
         open_orders: list[Order] = []
+        if self._oms is not None:
+            open_orders = self._oms.get_open_orders(symbol)
 
         # 资金费率（从 cache 读取所有 funding:* 键）
         funding_rates: dict[str, Decimal] = {}

@@ -157,17 +157,18 @@ def build(cfg: Config) -> System:
         max_weight = cfg.risk.max_weight,
         min_score  = 0.15,
     )
-    RiskService(
+    oms_svc = OMSService(
+        bus      = bus,
+        exchange = exchange,
+        cache    = cache,
+    )
+    risk_svc = RiskService(
         bus      = bus,
         pipeline = risk_pipeline,
         account  = account_svc,
         cache    = cache,
     )
-    OMSService(
-        bus      = bus,
-        exchange = exchange,
-        cache    = cache,
-    )
+    risk_svc.set_oms(oms_svc)   # 延迟注入，让 RiskContext.open_orders 有数据
     SettlementService(bus=bus)
     # AccountService 已在步骤 4 构造（已订阅 SettlementEvent）
 
