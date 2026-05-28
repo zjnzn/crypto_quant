@@ -54,7 +54,6 @@ class SignalService:
         self._cache      = cache
         self._strategies = strategies
         self._make_ctx   = make_ctx
-        self._synth_trade_count: dict[str, int] = {}  # 诊断计数器
 
         bus.subscribe(TradeEvent,       self._on_trade)
         bus.subscribe(BookEvent,        self._on_book)
@@ -83,28 +82,9 @@ class SignalService:
 
     def _on_book(self, event: BookEvent) -> None:
         sym = event.instrument.symbol
-        mid = (event.bid_price + event.ask_price) / 2
-
         self._cache.set(f"bid:{sym}", event.bid_price, ttl=_PRICE_TTL)
         self._cache.set(f"ask:{sym}", event.ask_price, ttl=_PRICE_TTL)
         self._dispatch(event, "on_book")
-
-        # aggTrade 流在 combined stream 中不可用，用 bookTicker mid price 模拟 TradeEvent
-        cnt = self._synth_trade_count.get(sym, 0) + 1
-        self._synth_trade_count[sym] = cnt
-        if cnt == 1:
-            log.info("synth TradeEvent 已启用（aggTrade 不可用）symbol=%s mid=%.6f", sym, mid)
-        elif cnt % 500 == 0:
-            log.debug("synth TradeEvent #%d  symbol=%s", cnt, sym)
-
-        trade = TradeEvent(
-            ts=event.ts,
-            instrument=event.instrument,
-            price=mid,
-            qty=Decimal("0"),
-            buyer_maker=False,
-        ).caused_by(event)
-        self._on_trade(trade)
 
     def _on_funding(self, event: FundingRateEvent) -> None:
         sym = event.instrument.symbol
