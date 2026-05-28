@@ -91,8 +91,8 @@ def startup_checks(system, instruments: dict) -> bool:
 
     log.info("[2/3] 验证账户净值...")
     nav = float(system.account.get_nav_usdt("main"))
-    if nav < 100.0:
-        log.error("  净值 %.2f USDT < 最低 100 USDT，中止", nav)
+    if nav < 10.0:
+        log.error("  净值 %.2f USDT < 最低 10 USDT，中止", nav)
         return False
     log.info("  账户净值: %.2f USDT ✓", nav)
 

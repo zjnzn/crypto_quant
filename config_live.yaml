@@ -21,7 +21,7 @@ execution:
 
 account:
   main_id: main
-  initial_usdt: 10000.0  # 仅用于回测初始化，实盘从交易所拉取
+  initial_usdt: 10.0  # 仅用于回测初始化，实盘从交易所拉取
 
 risk:
   max_weight:       0.10    # 单标的最大仓位权重
