@@ -82,9 +82,21 @@ class SignalService:
 
     def _on_book(self, event: BookEvent) -> None:
         sym = event.instrument.symbol
+        mid = (event.bid_price + event.ask_price) / 2
+
         self._cache.set(f"bid:{sym}", event.bid_price, ttl=_PRICE_TTL)
         self._cache.set(f"ask:{sym}", event.ask_price, ttl=_PRICE_TTL)
         self._dispatch(event, "on_book")
+
+        # aggTrade 流在 combined stream 中不可用，用 bookTicker mid price 模拟 TradeEvent
+        trade = TradeEvent(
+            ts=event.ts,
+            instrument=event.instrument,
+            price=mid,
+            qty=Decimal("0"),
+            buyer_maker=False,
+        ).caused_by(event)
+        self._on_trade(trade)
 
     def _on_funding(self, event: FundingRateEvent) -> None:
         sym = event.instrument.symbol
