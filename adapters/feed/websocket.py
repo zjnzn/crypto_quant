@@ -53,7 +53,7 @@ class BinanceWsFeed:
     """
 
     # Binance USDT-M Futures WebSocket
-    WS_BASE_FUTURES_LIVE = "wss://dstream.binance.com"
+    WS_BASE_FUTURES_LIVE = "wss://fstream.binance.com/stream"
     WS_BASE_FUTURES_TEST = "wss://stream.testnet.binance.vision/stream"
     # Binance Spot WebSocket
     WS_BASE_SPOT_LIVE = "wss://stream.binance.com:9443/stream"
