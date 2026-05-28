@@ -89,7 +89,8 @@ class BinanceWsFeed:
             return
         self._running = True
         url = self._build_url()
-        log.info("BinanceWsFeed 启动  url=%s", url)
+        log.info("BinanceWsFeed 启动  url=%s  symbols=%s",
+                 url, list(self._instruments.keys()))
         self._thread = threading.Thread(
             target=self._ws_worker, args=(url,), daemon=True,
             name="binance-ws",
@@ -217,8 +218,14 @@ class BinanceWsFeed:
                     ask_price   = Decimal(data["a"]),
                     ask_qty     = Decimal(data["A"]),
                 )
+            else:
+                # 诊断：记录未识别的事件类型（例如 Binance 新增字段）
+                log.warning("未识别的 WS 事件类型: %s  keys=%s",
+                           event_type, list(data.keys())[:10])
         except (KeyError, ValueError):
-            log.debug("无法解析 WS 消息: %s", raw[:100])
+            log.warning("无法解析 WS 消息 (KeyError/ValueError): %s", raw[:200])
+        except Exception:
+            log.exception("无法解析 WS 消息 (未知异常): %s", raw[:200])
         return None
 
     @staticmethod
