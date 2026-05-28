@@ -40,6 +40,7 @@ class PortfolioService:
         min_score:      float = 0.15,
         allow_short:    bool  = True,
         order_cooldown: float = 0.0,   # 两次同标的下单最小间隔（秒）
+        oms:           object | None = None,  # OMSService（延迟注入）
     ) -> None:
         self._bus        = bus
         self._cache      = cache
@@ -49,6 +50,7 @@ class PortfolioService:
         self._min_score      = min_score
         self._allow_short    = allow_short
         self._order_cooldown = order_cooldown
+        self._oms            = oms
 
         # (symbol, strategy_id) → SignalEvent
         self._signals: dict[tuple[str, str], SignalEvent] = {}
@@ -58,6 +60,10 @@ class PortfolioService:
         bus.subscribe(SignalEvent, self._on_signal)
         log.info("PortfolioService 启动  max_weight=%.0f%%  min_score=%.2f  short=%s",
                  max_weight * 100, min_score, allow_short)
+
+    def set_oms(self, oms: object) -> None:
+        """延迟注入 OMS（container 中解决循环依赖）。"""
+        self._oms = oms
 
     def _on_signal(self, event: SignalEvent) -> None:
         sym = event.instrument.symbol
@@ -94,13 +100,13 @@ class PortfolioService:
         if nav <= 0:
             return
 
-        abs_score = abs(combined_score)
+        abs_score = Decimal(str(min(abs(combined_score), 1.0)))
 
         if abs_score < self._min_score:
             target_size = Decimal(0)
             target_side = Side.BUY
         else:
-            target_size = (Decimal(str(abs_score))
+            target_size = (abs_score
                            * self._max_weight * nav / price)
             target_size = event.instrument.round_qty(target_size)
             target_side = Side.BUY if combined_score > 0 else Side.SELL
@@ -113,7 +119,19 @@ class PortfolioService:
         cur_pos = self._account.get_position(self._account_id, sym)
         current_size = cur_pos.size if cur_pos else Decimal(0)
 
-        delta = abs(target_size - current_size)
+        # ★ 计入在途订单（已提交但未成交的增量），防止重复下单
+        # PortfolioService 需要访问 OMS 来获取在途订单
+        pending_delta = Decimal(0)
+        if self._oms is not None:
+            for pending in self._oms.get_open_orders(sym):
+                if pending.side == Side.BUY:
+                    pending_delta += pending.remaining_qty
+                else:
+                    pending_delta -= pending.remaining_qty
+
+        # effective_size = 已确认持仓 + 在途增量
+        effective_size = current_size + pending_delta
+        delta = abs(target_size - effective_size)
         if delta < event.instrument.lot_size:
             return
 

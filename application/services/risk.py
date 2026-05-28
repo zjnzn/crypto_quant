@@ -170,11 +170,14 @@ class RiskService:
         # 日内回撤（Phase 2 暂无，Phase 3 由 MonitorService 写入）
         daily_drawdown = self._cache.get(f"drawdown:{account_id}") or Decimal(0)
 
+        # 最新成交价（供风控中间件估算 market order 名义价值）
+        price = self._cache.get(f"price:{symbol}")
+
         return RiskContext(
             account_id    = account_id,
             nav_usdt      = nav,
             positions     = positions,
             open_orders   = open_orders,
             funding_rates = funding_rates,
-            extra         = {"daily_drawdown": daily_drawdown},
+            extra         = {"daily_drawdown": daily_drawdown, "price": price},
         )

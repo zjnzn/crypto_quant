@@ -149,7 +149,7 @@ def build(cfg: Config) -> System:
         strategies = registry.all(),
         make_ctx   = make_ctx,
     )
-    PortfolioService(
+    portfolio_svc = PortfolioService(
         bus        = bus,
         cache      = cache,
         account    = account_svc,
@@ -162,6 +162,7 @@ def build(cfg: Config) -> System:
         exchange = exchange,
         cache    = cache,
     )
+    portfolio_svc.set_oms(oms_svc)  # 延迟注入，让 delta 检查计入在途订单
     risk_svc = RiskService(
         bus      = bus,
         pipeline = risk_pipeline,

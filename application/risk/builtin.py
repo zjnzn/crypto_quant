@@ -39,11 +39,34 @@ class PositionLimitMiddleware(RiskMiddleware):
 
         cur = ctx.positions.get(order.instrument.symbol)
         cur_size = cur.size if cur else Decimal(0)
-        delta    = order.qty if order.side == Side.BUY else -order.qty
-        new_size = cur_size + delta
 
-        # 用 limit_price 估算，无 limit_price 用 0（market order，偏保守）
-        est_price = order.limit_price or Decimal(1)
+        # ★ 计入在途订单（防止重复下单导致超量）
+        # 同方向在途订单应累加，反方向应抵消
+        pending_delta = Decimal(0)
+        for pending in ctx.open_orders:
+            if pending.instrument.symbol != order.instrument.symbol:
+                continue
+            if pending.side == Side.BUY:
+                pending_delta += pending.remaining_qty
+            else:
+                pending_delta -= pending.remaining_qty
+
+        delta    = order.qty if order.side == Side.BUY else -order.qty
+        # new_size = 当前持仓 + 在途增量 + 本单增量
+        new_size = cur_size + pending_delta + delta
+
+        # ★ market order 无 limit_price，必须从 cache 获取最新价格
+        est_price = order.limit_price
+        if est_price is None or est_price <= 0:
+            # 从风控上下文获取最新成交价
+            cache_price = ctx.extra.get("price")
+            if cache_price is not None and cache_price > 0:
+                est_price = cache_price
+            else:
+                # 无法获取价格，拒绝订单（保守策略）
+                return RiskResult.reject(
+                    f"{order.instrument.symbol} 无法估算价格，拒绝 market order"
+                )
         if ctx.nav_usdt > 0:
             weight = abs(new_size * est_price) / ctx.nav_usdt
             if weight > self._max:
@@ -143,7 +166,15 @@ class MinNotionalMiddleware(RiskMiddleware):
 
     def process(self, order: Order, ctx: RiskContext,
                 call_next: Next) -> RiskResult:
-        est_price = order.limit_price or Decimal(1)
+        # ★ market order 无 limit_price，从 cache 获取最新价格
+        est_price = order.limit_price
+        if est_price is None or est_price <= 0:
+            cache_price = ctx.extra.get("price")
+            if cache_price is not None and cache_price > 0:
+                est_price = cache_price
+            else:
+                # 无法获取价格，跳过最小名义价值检查（不阻塞交易）
+                return call_next(order, ctx)
         notional  = order.qty * est_price
         min_n     = order.instrument.min_notional
 

@@ -469,3 +469,52 @@ class TestRiskPipeline:
         result   = pipeline.check(buy_order, ctx)
         assert not result.passed
         assert "资金费率" in result.reason
+
+    def test_pending_orders_included_in_weight(self, btc_perp: Instrument) -> None:
+        """
+        在途订单应计入权重计算，防止重复下单导致超量。
+
+        场景：
+          - NAV = 10000 USDT
+          - 当前持仓 0
+          - 在途买单: 0.008 BTC @ 65000 = 520 USDT (5.2%)
+          - 新订单: 0.005 BTC @ 65000 = 325 USDT (3.25%)
+          - 总权重 = 8.45%，超过 5% 上限 → 应被拒绝
+        """
+        from application.risk.pipeline import RiskPipeline
+        from application.risk.builtin  import PositionLimitMiddleware
+        from core.ports.risk import RiskContext
+        from core.domain.order import Order, OrderStatus
+
+        # 在途订单（全部未成交）
+        pending_order = Order(
+            instrument  = btc_perp,
+            account_id  = "main",
+            side        = Side.BUY,
+            qty         = Decimal("0.008"),
+            limit_price = Decimal("65000"),
+            status      = OrderStatus.SUBMITTED,
+        )
+
+        ctx = RiskContext(
+            account_id    = "main",
+            nav_usdt      = Decimal("10000"),
+            positions     = {},  # 无持仓
+            open_orders   = [pending_order],
+            funding_rates = {},
+        )
+
+        new_order = Order(
+            instrument  = btc_perp,
+            account_id  = "main",
+            side        = Side.BUY,
+            qty         = Decimal("0.005"),
+            limit_price = Decimal("65000"),
+        )
+
+        pipeline = RiskPipeline([PositionLimitMiddleware(max_weight=0.05)])
+        result   = pipeline.check(new_order, ctx)
+        # pending 0.008 + 新单 0.005 = 0.013 BTC @ 65000 = 845 USDT (8.45%)
+        # 超过 5% 上限，应被拒绝
+        assert not result.passed
+        assert "权重" in result.reason
