@@ -9,11 +9,7 @@ APP_NAME="crypto-quant"
 # Python 解释器（优先使用虚拟环境）
 APP_HOME=$(cd "$(dirname "$0")" && pwd)
 VENV_DIR="$APP_HOME/.venv"
-if [ -d "$VENV_DIR" ]; then
-    PYTHON="$VENV_DIR/bin/python"
-else
-    PYTHON=$(command -v python3 || command -v python)
-fi
+PYTHON=""  # 由 check_python() 动态检测
 
 # 运行模式: live | paper | dry-run | backtest
 RUN_MODE="dry-run"
@@ -41,15 +37,22 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-print_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
+print_info()    { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
+print_success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
+print_warning() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
+print_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
 
 check_python() {
-    if [ -z "$PYTHON" ] || ! command -v "$PYTHON" &>/dev/null; then
+    # 优先虚拟环境，其次系统 python3
+    if [ -x "$VENV_DIR/bin/python" ]; then
+        PYTHON="$VENV_DIR/bin/python"
+    elif command -v python3 &>/dev/null; then
+        PYTHON="python3"
+    elif command -v python &>/dev/null; then
+        PYTHON="python"
+    else
         print_error "Python 未找到，请安装 Python 3.10+ 或创建虚拟环境"
-        print_info "  python -m venv .venv && source .venv/bin/activate"
+        print_info "  python3 -m venv .venv && source .venv/bin/activate"
         exit 1
     fi
 }
