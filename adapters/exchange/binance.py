@@ -91,8 +91,8 @@ class BinanceFuturesExchange:
 
     def get_position(self, instrument: Instrument,
                      account_id: str) -> Position | None:
-        """获取持仓（GET /fapi/v2/positionRisk）。"""
-        raw_list = self._signed_get("/fapi/v2/positionRisk", {
+        """获取持仓（GET /fapi/v3/positionRisk）。"""
+        raw_list = self._signed_get("/fapi/v3/positionRisk", {
             "symbol": self._to_binance_symbol(instrument),
         })
         for raw in raw_list:
