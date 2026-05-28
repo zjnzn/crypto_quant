@@ -52,12 +52,12 @@ class BinanceWsFeed:
         feed.stop()
     """
 
-    # Binance USDT-M Futures WebSocket
-    WS_BASE_FUTURES_LIVE = "wss://fstream.binance.com/stream"
-    WS_BASE_FUTURES_TEST = "wss://stream.testnet.binance.vision/stream"
+    # Binance USDT-M Futures WebSocket（2026-04 起按 public/market/private 分流）
+    WS_BASE_FUTURES_LIVE = "wss://fstream.binance.com"
+    WS_BASE_FUTURES_TEST = "wss://stream.testnet.binance.vision"
     # Binance Spot WebSocket
-    WS_BASE_SPOT_LIVE = "wss://stream.binance.com:9443/stream"
-    WS_BASE_SPOT_TEST = "wss://testnet.binance.vision/stream"
+    WS_BASE_SPOT_LIVE = "wss://stream.binance.com:9443"
+    WS_BASE_SPOT_TEST = "wss://testnet.binance.vision"
 
     def __init__(
         self,
@@ -84,17 +84,18 @@ class BinanceWsFeed:
     # ── 公开 API ──────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """启动后台 WebSocket 线程。"""
+        """启动后台 WebSocket 线程（按 public/market 分流各一个连接）。"""
         if self._running:
             return
         self._running = True
-        url = self._build_url()
-        log.info("BinanceWsFeed 启动  url=%s", url)
-        self._thread = threading.Thread(
-            target=self._ws_worker, args=(url,), daemon=True,
-            name="binance-ws",
-        )
-        self._thread.start()
+        urls = self._build_urls()
+        for i, url in enumerate(urls):
+            log.info("BinanceWsFeed 启动 [%d/%d] url=%s", i + 1, len(urls), url)
+            t = threading.Thread(
+                target=self._ws_worker, args=(url,), daemon=True,
+                name=f"binance-ws-{i}",
+            )
+            t.start()
 
     def stop(self) -> None:
         """通知主循环停止。"""
@@ -149,12 +150,21 @@ class BinanceWsFeed:
 
     # ── 内部 ──────────────────────────────────────────────────────────────────
 
-    def _build_url(self) -> str:
+    def _build_urls(self) -> list[str]:
+        """按 Binance 新 WebSocket 分流规则构建 URL：
+        bookTicker → /public，aggTrade → /market"""
         symbols = list(self._instruments.keys())
-        streams = "/".join(
-            f"{s}@aggTrade/{s}@bookTicker" for s in symbols
-        )
-        return f"{self._ws_base}?streams={streams}"
+        urls: list[str] = []
+
+        public_streams = "/".join(f"{s}@bookTicker" for s in symbols)
+        if public_streams:
+            urls.append(f"{self._ws_base}/public/stream?streams={public_streams}")
+
+        market_streams = "/".join(f"{s}@aggTrade" for s in symbols)
+        if market_streams:
+            urls.append(f"{self._ws_base}/market/stream?streams={market_streams}")
+
+        return urls
 
     def _ws_worker(self, url: str) -> None:
         """后台线程：建立 WS 连接，收到消息放入 queue。"""

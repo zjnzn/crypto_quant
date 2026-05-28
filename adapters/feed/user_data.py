@@ -41,9 +41,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# User data stream WS base
-_WS_LIVE = "wss://fstream.binance.com/ws"
-_WS_TEST = "wss://stream.testnet.binance.vision/ws"
+# User data stream WS base（2026-04 起迁移到 /private 入口）
+_WS_LIVE = "wss://fstream.binance.com/private/ws"
+_WS_TEST = "wss://stream.testnet.binance.vision/private/ws"
 
 # listenKey 续期间隔（秒），Binance 要求 < 60 分钟
 _KEEPALIVE_INTERVAL = 1800   # 30 分钟
@@ -100,7 +100,7 @@ class BinanceUserDataStream:
             return
 
         self._running = True
-        url = f"{self._ws_base}/{self._listen_key}"
+        url = f"{self._ws_base}?listenKey={self._listen_key}&events=ORDER_TRADE_UPDATE"
         log.info("BinanceUserDataStream 启动  url=%s", url)
 
         self._ws_thread = threading.Thread(
