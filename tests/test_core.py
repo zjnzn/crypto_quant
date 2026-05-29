@@ -453,6 +453,26 @@ class TestRiskPipeline:
         result   = pipeline.check(close_order, ctx)
         assert result.passed
 
+    def test_reduce_only_still_checked_by_min_notional(
+        self, btc_perp: Instrument, ctx: "RiskContext") -> None:
+        """reduce_only 单仍受最小名义价值约束（check_reduce_only=False）。"""
+        from application.risk.pipeline import RiskPipeline
+        from application.risk.builtin  import MinNotionalMiddleware
+
+        # notional = 0.00001 * 65000 = 0.65 < min_notional(5) → 即使平仓也应拒绝
+        tiny_close = Order(
+            instrument  = btc_perp,
+            account_id  = "main",
+            side        = Side.SELL,
+            qty         = Decimal("0.00001"),
+            limit_price = Decimal("65000"),
+            reduce_only = True,
+        )
+        pipeline = RiskPipeline([MinNotionalMiddleware()])
+        result   = pipeline.check(tiny_close, ctx)
+        assert not result.passed
+        assert "名义价值" in result.reason
+
     def test_funding_rate_blocks_long(self, buy_order: Order) -> None:
         from application.risk.pipeline import RiskPipeline
         from application.risk.builtin  import FundingRateMiddleware

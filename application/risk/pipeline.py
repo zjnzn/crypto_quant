@@ -31,11 +31,20 @@ Next = Callable[[Order, RiskContext], RiskResult]
 class RiskMiddleware:
     """风控中间件基类（也满足 RiskPort 结构化子类型）。"""
     name: str = "base"
+    # True: reduce_only 平仓单跳过本中间件检查（多数风控只约束开仓）。
+    # 子类设为 False 表示该检查对平仓单同样生效（如最小名义价值、在途数量）。
+    check_reduce_only: bool = True
 
     def process(self, order: Order, ctx: RiskContext,
                 call_next: Next) -> RiskResult:
+        if self.check_reduce_only and order.reduce_only:
+            return call_next(order, ctx)   # 平仓单直接放行
+        return self._do_check(order, ctx, call_next)
+
+    def _do_check(self, order: Order, ctx: RiskContext,
+                  call_next: Next) -> RiskResult:
         raise NotImplementedError(
-            f"{type(self).__name__} 必须实现 process()"
+            f"{type(self).__name__} 必须实现 _do_check()"
         )
 
     @staticmethod

@@ -32,11 +32,8 @@ class PositionLimitMiddleware(RiskMiddleware):
     def __init__(self, max_weight: float = 0.10) -> None:
         self._max = Decimal(str(max_weight))
 
-    def process(self, order: Order, ctx: RiskContext,
-                call_next: Next) -> RiskResult:
-        if order.reduce_only:
-            return call_next(order, ctx)   # 平仓单直接放行
-
+    def _do_check(self, order: Order, ctx: RiskContext,
+                  call_next: Next) -> RiskResult:
         cur = ctx.positions.get(order.instrument.symbol)
         cur_size = cur.size if cur else Decimal(0)
 
@@ -71,11 +68,8 @@ class MaxLeverageMiddleware(RiskMiddleware):
     def __init__(self, global_max: int = 10) -> None:
         self._max = global_max
 
-    def process(self, order: Order, ctx: RiskContext,
-                call_next: Next) -> RiskResult:
-        if order.reduce_only:
-            return call_next(order, ctx)
-
+    def _do_check(self, order: Order, ctx: RiskContext,
+                  call_next: Next) -> RiskResult:
         cur = ctx.positions.get(order.instrument.symbol)
         leverage = cur.leverage if cur else 1
         allowed  = min(order.instrument.max_leverage, self._max)
@@ -98,11 +92,8 @@ class DrawdownMiddleware(RiskMiddleware):
     def __init__(self, max_drawdown: float = 0.05) -> None:
         self._max = Decimal(str(max_drawdown))
 
-    def process(self, order: Order, ctx: RiskContext,
-                call_next: Next) -> RiskResult:
-        if order.reduce_only:
-            return call_next(order, ctx)
-
+    def _do_check(self, order: Order, ctx: RiskContext,
+                  call_next: Next) -> RiskResult:
         drawdown = ctx.extra.get("daily_drawdown", Decimal(0))
         if isinstance(drawdown, float):
             drawdown = Decimal(str(drawdown))
@@ -132,9 +123,10 @@ class FundingRateMiddleware(RiskMiddleware):
         """max_rate: 每8小时资金费率上限，默认 0.3%。"""
         self._max = Decimal(str(max_rate))
 
-    def process(self, order: Order, ctx: RiskContext,
-                call_next: Next) -> RiskResult:
-        if order.reduce_only or order.side == Side.SELL:
+    def _do_check(self, order: Order, ctx: RiskContext,
+                  call_next: Next) -> RiskResult:
+        # 卖单（平多/开空）不需付资金费，放行；reduce_only 已由基类过滤
+        if order.side == Side.SELL:
             return call_next(order, ctx)
 
         rate = ctx.funding_rates.get(order.instrument.symbol, Decimal(0))
@@ -150,9 +142,10 @@ class FundingRateMiddleware(RiskMiddleware):
 class MinNotionalMiddleware(RiskMiddleware):
     """订单名义价值必须满足交易所最小要求。"""
     name = "min_notional"
+    check_reduce_only = False   # 平仓单也需满足最小名义价值
 
-    def process(self, order: Order, ctx: RiskContext,
-                call_next: Next) -> RiskResult:
+    def _do_check(self, order: Order, ctx: RiskContext,
+                  call_next: Next) -> RiskResult:
         # ★ market order 无 limit_price，从 limit_price 或 cache 解析预估价
         est_price = self._resolve_est_price(order, ctx)
         if est_price is None:
@@ -172,12 +165,13 @@ class MinNotionalMiddleware(RiskMiddleware):
 class OpenOrdersLimitMiddleware(RiskMiddleware):
     """在途订单数量不超过上限（防止意外堆积）。"""
     name = "open_orders_limit"
+    check_reduce_only = False   # 平仓单也计入在途数量限制
 
     def __init__(self, max_open: int = 20) -> None:
         self._max = max_open
 
-    def process(self, order: Order, ctx: RiskContext,
-                call_next: Next) -> RiskResult:
+    def _do_check(self, order: Order, ctx: RiskContext,
+                  call_next: Next) -> RiskResult:
         count = len([o for o in ctx.open_orders
                      if o.instrument.symbol == order.instrument.symbol
                      and o.status.is_active])
