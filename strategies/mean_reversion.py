@@ -7,6 +7,7 @@ import math
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from application.strategy.base import BaseStrategy
 from core.domain.signal import Signal
 from strategies.mixin import PriceBufferMixin
 
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class MeanReversionStrategy(PriceBufferMixin):
+class MeanReversionStrategy(PriceBufferMixin, BaseStrategy):
     """均值回归策略。
 
     Z-score 超过阈值时产生反向信号。
@@ -75,18 +76,7 @@ class MeanReversionStrategy(PriceBufferMixin):
             meta={"source": "funding", "rate": rate},
         )]
 
-    def on_book(self, event: BookEvent, ctx: StrategyContext) -> list[Signal]:
-        return []
-
-    def on_fill(self, event, ctx) -> None:
-        pass
-
-    def on_start(self, ctx) -> None:
-        log.info("%s 启动  window=%d  z_entry=%.1f  z_threshold=%.1f",
-                 self.name, self._window, self._z_entry, self._z_threshold)
-
-    def on_stop(self, ctx) -> None:
-        log.info("%s 停止", self.name)
+    # ── 内部计算 ─────────────────────────────────────
 
     def _calc(self, prices: list[Decimal], current: Decimal) -> tuple[float | None, float, float]:
         floats = [float(p) for p in prices]

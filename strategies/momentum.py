@@ -6,6 +6,7 @@ import logging
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from application.strategy.base import BaseStrategy
 from core.domain.signal import Signal
 from strategies.mixin import PriceBufferMixin
 
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class MomentumStrategy(PriceBufferMixin):
+class MomentumStrategy(PriceBufferMixin, BaseStrategy):
     """价格动量策略。
 
     当窗口期收益率超过阈值时产生信号。
@@ -58,19 +59,3 @@ class MomentumStrategy(PriceBufferMixin):
             strategy_id=self.name,
             meta={"ret": ret, "window": self._window},
         )]
-
-    def on_book(self, event: BookEvent, ctx: StrategyContext) -> list[Signal]:
-        return []
-
-    def on_funding(self, event, ctx) -> list[Signal]:
-        return []
-
-    def on_fill(self, event, ctx) -> None:
-        pass
-
-    def on_start(self, ctx) -> None:
-        log.info("%s 启动  window=%d  scale=%.2f%%  min_score=%.2f",
-                 self.name, self._window, self._scale * 100, self._min_score)
-
-    def on_stop(self, ctx) -> None:
-        log.info("%s 停止", self.name)
