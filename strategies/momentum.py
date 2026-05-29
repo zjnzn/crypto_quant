@@ -55,7 +55,7 @@ class MomentumStrategy(PriceBufferMixin):
             instrument=event.instrument,
             score=score,
             confidence=confidence,
-            strategy=self.name,
+            strategy_id=self.name,
             meta={"ret": ret, "window": self._window},
         )]
 

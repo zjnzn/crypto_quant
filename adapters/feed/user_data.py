@@ -1,21 +1,44 @@
-"""Binance UserDataStream — 监听订单/账户更新。"""
+"""
+adapters/feed/user_data.py
 
+Binance 用户数据流（User Data Stream）。
+
+职责：
+  订阅交易所的私有 WebSocket 流，当真实订单成交时，
+  将 FillEvent 放入 queue，由主线程从 queue 取出并发布到事件总线。
+
+设计要点（与 BinanceWsFeed 一致）：
+  - 后台线程建立 WS 连接，将原始消息解析后放入 queue.Queue
+  - 主线程调用 drain() 从 queue 取出并 bus.publish（保证总线线程安全）
+  - 避免后台线程直接 bus.publish 导致竞态条件
+
+协议：
+  1. POST /fapi/v1/listenKey  → 获取一次性 key
+  2. wss://.../ws/{listenKey} → 建立私有流
+  3. 每 30 分钟 PUT /fapi/v1/listenKey 续期
+  4. 解析 ORDER_TRADE_UPDATE 消息 → FillEvent
+
+依赖：pip install websocket-client
+"""
 from __future__ import annotations
 
 import json
 import logging
+import queue
 import threading
 import time
 from decimal import Decimal
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from adapters.feed.base import _QueueWsFeed
-from core.domain import Side
+from core.domain.instrument import Instrument
+from core.domain.order import Side
+from core.ports.bus import EventBusPort
+from application.events import FillEvent
 
 if TYPE_CHECKING:
     from adapters.exchange.binance import BinanceFuturesExchange
-    from core.domain import Instrument
-    from core.ports import EventBusPort
 
 log = logging.getLogger(__name__)
 
@@ -23,154 +46,196 @@ log = logging.getLogger(__name__)
 _WS_LIVE = "wss://fstream.binance.com/private/ws"
 _WS_TEST = "wss://stream.testnet.binance.vision/private/ws"
 
+# listenKey 续期间隔（秒），Binance 要求 < 60 分钟
+_KEEPALIVE_INTERVAL = 1800   # 30 分钟
+
 
 class BinanceUserDataStream(_QueueWsFeed):
-    """Binance U本位合约用户数据流。
+    """
+    订阅 Binance 用户数据流，接收实盘订单成交回报。
 
-    负责:
-    - listenKey 创建与续期
-    - 接收 ORDER_TRADE_UPDATE → FillEvent
-    - listenKey 过期后自动重建连接
+    用法：
+        instruments = {"ethusdt": eth_perp, ...}
+        user_stream = BinanceUserDataStream(
+            bus=system.bus,
+            exchange=binance_adapter,
+            instruments=instruments,
+            testnet=True,
+        )
+        user_stream.start()   # 启动后台 WS + 续期线程
+        # 主循环中定期调用 user_stream.drain() 发布成交事件
+
+    停止：
+        user_stream.stop()
     """
 
     def __init__(
         self,
-        bus: EventBusPort,
-        exchange: BinanceFuturesExchange,
-        instruments: dict[str, Instrument],
-        *,
-        testnet: bool = False,
+        bus:         EventBusPort,
+        exchange:    "BinanceFuturesExchange",
+        instruments: dict[str, Instrument],   # binance_symbol_lower → Instrument
+        testnet:     bool = False,
     ) -> None:
         super().__init__(bus, queue_size=1_000)
-        self._exchange = exchange
+        self._exchange    = exchange
         self._instruments = {k.lower(): v for k, v in instruments.items()}
-        self._testnet = testnet
-        self._ws_base = _WS_TEST if testnet else _WS_LIVE
+        self._ws_base     = _WS_TEST if testnet else _WS_LIVE
         self._listen_key: str | None = None
-        self._keepalive_thread: threading.Thread | None = None
+        self._ws_thread:  threading.Thread | None = None
+        self._ka_thread:  threading.Thread | None = None
 
-    # ── 启动 ─────────────────────────────────────────
+    # ── 公开 API ──────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """创建 listenKey 并启动 WS 连接 + 续期线程。"""
-        if self._running:
+        """
+        1. 获取 listenKey
+        2. 启动 WebSocket 后台线程
+        3. 启动续期后台线程
+        """
+        try:
+            self._listen_key = self._exchange.create_listen_key()
+        except Exception as e:
+            log.error("无法获取 listenKey，用户数据流启动失败: %s", e)
             return
-        self._running = True
 
-        self._listen_key = self._exchange.create_listen_key()
+        self._running = True
         url = f"{self._ws_base}?listenKey={self._listen_key}&events=ORDER_TRADE_UPDATE"
         log.info("BinanceUserDataStream 启动  url=%s", url)
 
-        # WS 工作线程
-        threading.Thread(
-            target=self._ws_worker,
-            args=(url, self._handle),
-            kwargs={"ping_interval": 20, "ping_timeout": 10},
-            daemon=True,
-            name="binance-user-data",
-        ).start()
-
-        # listenKey 续期线程（每 30 分钟）
-        self._keepalive_thread = threading.Thread(
-            target=self._keepalive_loop, daemon=True, name="binance-keepalive"
+        self._ws_thread = threading.Thread(
+            target=self._ws_worker, args=(url,),
+            name="binance-user-data", daemon=True,
         )
-        self._keepalive_thread.start()
+        self._ws_thread.start()
 
-    # ── 覆写 stop ────────────────────────────────────
+        self._ka_thread = threading.Thread(
+            target=self._keepalive_worker,
+            name="binance-keepalive", daemon=True,
+        )
+        self._ka_thread.start()
 
     def stop(self) -> None:
-        """停止 WS 连接 + 关闭 listenKey。"""
         super().stop()
-        if self._listen_key is not None:
+        if self._listen_key:
+            self._exchange.close_listen_key(self._listen_key)
+        log.info("BinanceUserDataStream 停止")
+
+    # ── WebSocket 工作线程 ────────────────────────────────────────────────────
+
+    def _ws_worker(self, url: str) -> None:
+        def on_message(ws, raw):
             try:
-                self._exchange.close_listen_key()
+                self._handle(raw)
             except Exception:
-                log.exception("关闭 listenKey 失败")
+                log.exception("处理用户数据流消息失败")
 
-    # ── listenKey 续期 ────────────────────────────────
+        def on_error(ws, err):
+            log.error("用户数据流 WS 错误: %s", err)
 
-    def _keepalive_loop(self) -> None:
+        def on_close(ws, code, msg):
+            log.warning("用户数据流 WS 断开: %s %s", code, msg)
+            if self._running:
+                log.info("用户数据流重连...")
+                time.sleep(3)
+                self._ws_worker(url)
+
+        try:
+            import websocket
+            ws = websocket.WebSocketApp(
+                url,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+            )
+            ws.run_forever(ping_interval=20, ping_timeout=10)
+        except ImportError:
+            raise ImportError("需要安装 websocket-client：pip install websocket-client")
+
+    def _keepalive_worker(self) -> None:
+        """每 30 分钟续期 listenKey。"""
         while self._running:
-            time.sleep(30 * 60)  # 30 分钟
-            if not self._running:
+            time.sleep(_KEEPALIVE_INTERVAL)
+            if not self._running or not self._listen_key:
                 break
             try:
-                self._exchange.keepalive_listen_key()
+                self._exchange.keepalive_listen_key(self._listen_key)
                 log.debug("listenKey 续期成功")
-            except Exception:
-                log.exception("listenKey 续期失败")
+            except Exception as e:
+                log.error("listenKey 续期失败: %s，尝试重新获取...", e)
+                try:
+                    self._listen_key = self._exchange.create_listen_key()
+                    log.info("listenKey 已重新获取")
+                except Exception as e2:
+                    log.error("重新获取 listenKey 失败: %s", e2)
 
-    # ── 消息处理 ─────────────────────────────────────
+    # ── 消息解析 ──────────────────────────────────────────────────────────────
 
-    def _handle(self, raw: str) -> object | None:
-        """解析用户数据流消息，返回 FillEvent 或 None。"""
-        try:
-            payload = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            log.warning("非 JSON 消息: %s", raw[:120])
-            return None
+    def _handle(self, raw: str) -> None:
+        """
+        解析 Binance 用户数据流消息。
 
-        # 组合流格式
-        if "data" in payload and "e" in payload["data"]:
-            return self._parse_event(payload["data"])
-        # 单流格式
-        if "e" in payload:
-            return self._parse_event(payload)
-
-        log.debug("未处理的用户数据流消息: %s", raw[:120])
-        return None
-
-    def _parse_event(self, d: dict) -> object | None:
-        from application.events import FillEvent
-
-        event_type = d.get("e")
+        ORDER_TRADE_UPDATE 事件字段（关键字段）：
+          o.i   — orderId（exchange_order_id）
+          o.S   — side: BUY | SELL
+          o.X   — status: NEW / PARTIALLY_FILLED / FILLED / CANCELED ...
+          o.l   — lastFilledQty（本次成交量）
+          o.L   — lastFilledPrice（本次成交价）
+          o.n   — commission（手续费金额）
+          o.N   — commissionAsset（手续费币种）
+          o.s   — symbol（如 ETHUSDT）
+        """
+        data = json.loads(raw)
+        event_type = data.get("e")
 
         if event_type == "ORDER_TRADE_UPDATE":
-            return self._parse_order_trade(d.get("o", {}))
+            o      = data.get("o", {})
+            status = o.get("X", "")
 
-        if event_type == "listenKeyExpired":
-            log.warning("listenKey 过期，将重连")
-            self._reconnect()
-            return None
+            if status not in ("FILLED", "PARTIALLY_FILLED"):
+                return   # 只处理成交事件
 
-        return None
+            filled_qty = Decimal(str(o.get("l", "0")))
+            fill_price = Decimal(str(o.get("L", "0")))
+            if filled_qty <= 0 or fill_price <= 0:
+                return
 
-    def _parse_order_trade(self, o: dict) -> object:
-        from application.events import FillEvent
-        from core.domain import Instrument
+            sym_lower  = o.get("s", "").lower()
+            instrument = self._instruments.get(sym_lower)
+            if instrument is None:
+                log.warning("收到未注册标的的成交: %s", o.get("s"))
+                return
 
-        symbol = o.get("s", "").lower()
-        instrument = self._instruments.get(symbol)
-        if instrument is None:
-            log.warning("未知标的: %s", symbol)
-            return None
+            exchange_order_id = str(o.get("i", ""))
+            side       = Side.BUY if o.get("S") == "BUY" else Side.SELL
+            commission = Decimal(str(o.get("n", "0")))
+            comm_asset = o.get("N", instrument.quote)
+            is_maker   = (o.get("m", False))  # maker = True
 
-        side = Side.BUY if o.get("S") == "BUY" else Side.SELL
-        price = Decimal(str(o.get("L", "0")))
-        qty = Decimal(str(o.get("l", "0")))
-        commission = Decimal(str(o.get("n", "0")))
-        order_id = str(o.get("i", ""))
+            log.info("用户数据流成交  %s %s qty=%.4f @ %.4f  fee=%.6f %s",
+                     side.value, instrument.symbol,
+                     filled_qty, fill_price, commission, comm_asset)
 
-        return FillEvent(
-            instrument=instrument,
-            side=side,
-            price=price,
-            quantity=qty,
-            commission=commission,
-            exchange_id=order_id,
-        )
+            try:
+                self._queue.put_nowait(FillEvent(
+                    exchange_order_id = exchange_order_id,
+                    instrument        = instrument,
+                    side              = side,
+                    filled_qty        = filled_qty,
+                    fill_price        = fill_price,
+                    commission        = commission,
+                    commission_asset  = comm_asset,
+                    is_maker          = bool(is_maker),
+                ))
+            except queue.Full:
+                log.warning("用户数据流 queue 已满，丢弃 FillEvent")
 
-    def _reconnect(self) -> None:
-        """listenKey 过期后重建连接。"""
-        try:
-            self._listen_key = self._exchange.create_listen_key()
-            url = f"{self._ws_base}?listenKey={self._listen_key}&events=ORDER_TRADE_UPDATE"
-            log.info("listenKey 重建，重连中...")
-            threading.Thread(
-                target=self._ws_worker,
-                args=(url, self._handle),
-                kwargs={"ping_interval": 20, "ping_timeout": 10},
-                daemon=True,
-            ).start()
-        except Exception:
-            log.exception("listenKey 重建失败")
+        elif event_type == "ACCOUNT_UPDATE":
+            # 可选：同步账户余额变化
+            log.debug("账户余额更新事件（已忽略，通过对账同步）")
+
+        elif event_type in ("listenKeyExpired",):
+            log.warning("listenKey 已过期，尝试重新获取...")
+            try:
+                self._listen_key = self._exchange.create_listen_key()
+            except Exception as e:
+                log.error("重新获取 listenKey 失败: %s", e)

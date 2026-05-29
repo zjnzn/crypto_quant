@@ -53,7 +53,7 @@ class MeanReversionStrategy(PriceBufferMixin):
             instrument=event.instrument,
             score=score,
             confidence=confidence,
-            strategy=self.name,
+            strategy_id=self.name,
             meta={"z_score": round(z, 3), "window": self._window},
         )]
 
@@ -71,7 +71,7 @@ class MeanReversionStrategy(PriceBufferMixin):
             instrument=event.instrument,
             score=score,
             confidence=min(1.0, abs(rate) / 0.003),
-            strategy=self.name,
+            strategy_id=self.name,
             meta={"source": "funding", "rate": rate},
         )]
 
