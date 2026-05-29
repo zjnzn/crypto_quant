@@ -502,6 +502,7 @@ class TestRiskPipeline:
             positions     = {},  # 无持仓
             open_orders   = [pending_order],
             funding_rates = {},
+            extra         = {"pending_delta": Decimal("0.008")},  # 预计算在途增量
         )
 
         new_order = Order(
