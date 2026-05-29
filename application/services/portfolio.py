@@ -123,11 +123,7 @@ class PortfolioService:
         # PortfolioService 需要访问 OMS 来获取在途订单
         pending_delta = Decimal(0)
         if self._oms is not None:
-            for pending in self._oms.get_open_orders(sym):
-                if pending.side == Side.BUY:
-                    pending_delta += pending.remaining_qty
-                else:
-                    pending_delta -= pending.remaining_qty
+            pending_delta = self._oms.compute_pending_delta(sym)
 
         # effective_size = 已确认持仓 + 在途增量
         effective_size = current_size + pending_delta

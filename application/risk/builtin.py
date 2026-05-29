@@ -40,16 +40,8 @@ class PositionLimitMiddleware(RiskMiddleware):
         cur = ctx.positions.get(order.instrument.symbol)
         cur_size = cur.size if cur else Decimal(0)
 
-        # ★ 计入在途订单（防止重复下单导致超量）
-        # 同方向在途订单应累加，反方向应抵消
-        pending_delta = Decimal(0)
-        for pending in ctx.open_orders:
-            if pending.instrument.symbol != order.instrument.symbol:
-                continue
-            if pending.side == Side.BUY:
-                pending_delta += pending.remaining_qty
-            else:
-                pending_delta -= pending.remaining_qty
+        # 在途订单增量（由 RiskService 预计算）
+        pending_delta = ctx.extra.get("pending_delta", Decimal(0))
 
         delta    = order.qty if order.side == Side.BUY else -order.qty
         # new_size = 当前持仓 + 在途增量 + 本单增量

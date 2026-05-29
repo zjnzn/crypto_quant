@@ -28,7 +28,7 @@ import threading
 from datetime import timedelta
 from decimal import Decimal
 
-from core.domain.order import Order, OrderStatus
+from core.domain.order import Order, OrderStatus, Side
 from core.ports.bus import EventBusPort
 from core.ports.cache import CachePort
 from core.ports.execution import ExecutionPort
@@ -181,6 +181,26 @@ class OMSService:
         if symbol is not None:
             orders = [o for o in orders if o.instrument.symbol == symbol]
         return orders
+
+    def compute_pending_delta(self, symbol: str) -> Decimal:
+        """
+        计算指定标的的在途订单净增量。
+
+        BUY  → +remaining_qty
+        SELL → -remaining_qty
+
+        返回: 净增量（正数表示净买入，负数表示净卖出）
+        """
+        delta = Decimal(0)
+        with self._lock:
+            for order in self._pending.values():
+                if order.instrument.symbol != symbol:
+                    continue
+                if order.side == Side.BUY:
+                    delta += order.remaining_qty
+                else:
+                    delta -= order.remaining_qty
+        return delta
 
     # ── 查询接口（测试 / 监控用）─────────────────────────────────────────────
 

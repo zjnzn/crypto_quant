@@ -93,7 +93,8 @@ class RiskService:
             cur_pos  = self._account.get_position(
                 event.account_id, instrument.symbol)
             cur_size = cur_pos.size if cur_pos else Decimal(0)
-            # ★ 扣除在途 SELL 单的 pending qty，防止超量下单
+            # 注意：这里只减去在途卖单，与 compute_pending_delta 逻辑不同
+            # 因为 reduce_only 只关心已有的卖出挂单，避免超额平仓
             if self._oms is not None:
                 for pending in self._oms.get_open_orders(sym):
                     if pending.side == Side.SELL:
@@ -173,11 +174,16 @@ class RiskService:
         # 最新成交价（供风控中间件估算 market order 名义价值）
         price = self._cache.get(f"price:{symbol}")
 
+        # Precompute pending delta for middleware
+        pending_delta = Decimal(0)
+        if self._oms is not None:
+            pending_delta = self._oms.compute_pending_delta(symbol)
+
         return RiskContext(
             account_id    = account_id,
             nav_usdt      = nav,
             positions     = positions,
             open_orders   = open_orders,
             funding_rates = funding_rates,
-            extra         = {"daily_drawdown": daily_drawdown, "price": price},
+            extra         = {"daily_drawdown": daily_drawdown, "price": price, "pending_delta": pending_delta},
         )
