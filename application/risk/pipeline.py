@@ -17,6 +17,7 @@ application/risk/pipeline.py  —  可插拔风控管道
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Callable
 
 from core.domain.order import Order
@@ -36,6 +37,20 @@ class RiskMiddleware:
         raise NotImplementedError(
             f"{type(self).__name__} 必须实现 process()"
         )
+
+    @staticmethod
+    def _resolve_est_price(order: Order, ctx: RiskContext) -> "Decimal | None":
+        """
+        解析订单的预估成交价：优先用 limit_price，否则取 cache 最新价。
+        两者都不可用时返回 None（由调用方决定拒绝还是跳过）。
+        """
+        est_price = order.limit_price
+        if est_price is not None and est_price > 0:
+            return est_price
+        cache_price = ctx.extra.get("price")
+        if cache_price is not None and cache_price > 0:
+            return cache_price
+        return None
 
 
 class RiskPipeline:

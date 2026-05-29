@@ -47,18 +47,13 @@ class PositionLimitMiddleware(RiskMiddleware):
         # new_size = 当前持仓 + 在途增量 + 本单增量
         new_size = cur_size + pending_delta + delta
 
-        # ★ market order 无 limit_price，必须从 cache 获取最新价格
-        est_price = order.limit_price
-        if est_price is None or est_price <= 0:
-            # 从风控上下文获取最新成交价
-            cache_price = ctx.extra.get("price")
-            if cache_price is not None and cache_price > 0:
-                est_price = cache_price
-            else:
-                # 无法获取价格，拒绝订单（保守策略）
-                return RiskResult.reject(
-                    f"{order.instrument.symbol} 无法估算价格，拒绝 market order"
-                )
+        # ★ market order 无 limit_price，从 limit_price 或 cache 解析预估价
+        est_price = self._resolve_est_price(order, ctx)
+        if est_price is None:
+            # 无法获取价格，拒绝订单（保守策略）
+            return RiskResult.reject(
+                f"{order.instrument.symbol} 无法估算价格，拒绝 market order"
+            )
         if ctx.nav_usdt > 0:
             weight = abs(new_size * est_price) / ctx.nav_usdt
             if weight > self._max:
@@ -158,15 +153,11 @@ class MinNotionalMiddleware(RiskMiddleware):
 
     def process(self, order: Order, ctx: RiskContext,
                 call_next: Next) -> RiskResult:
-        # ★ market order 无 limit_price，从 cache 获取最新价格
-        est_price = order.limit_price
-        if est_price is None or est_price <= 0:
-            cache_price = ctx.extra.get("price")
-            if cache_price is not None and cache_price > 0:
-                est_price = cache_price
-            else:
-                # 无法获取价格，跳过最小名义价值检查（不阻塞交易）
-                return call_next(order, ctx)
+        # ★ market order 无 limit_price，从 limit_price 或 cache 解析预估价
+        est_price = self._resolve_est_price(order, ctx)
+        if est_price is None:
+            # 无法获取价格，跳过最小名义价值检查（不阻塞交易）
+            return call_next(order, ctx)
         notional  = order.qty * est_price
         min_n     = order.instrument.min_notional
 
