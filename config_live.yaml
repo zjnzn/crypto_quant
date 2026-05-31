@@ -26,8 +26,8 @@ account:
   initial_usdt: 10.0  # 仅用于回测初始化，实盘从交易所拉取
 
 portfolio:
-  min_score:      0.30   # 信号合并后最低分数（提高阈值减少弱信号交易）
-  order_cooldown: 60     # 同标的两次下单最小间隔秒数（防止频繁往返交易）
+  min_score:      0.40   # 信号合并后最低分数（提高阈值减少弱信号交易）
+  order_cooldown: 1     # 同标的两次下单最小间隔秒数（防止频繁往返交易）
 
 risk:
   max_weight:       0.35    # 小账户(14U): 5U最小名义值/14.72≈34%
