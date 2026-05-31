@@ -72,64 +72,46 @@ class RiskService:
         instrument = event.instrument
         sym        = instrument.symbol
 
-        # ── 1. 净仓模式判断 ─────────────────────────────────────────────────
+        # ── 1. 净仓模式：直接计算 delta ──────────────────────────────────────
         # target_position: 正数=多头数量，负数=空头数量，0=空仓
         # net_position: 当前净仓位（同上）
+        # delta = target - current：正数=需要买入，负数=需要卖出
+        #
+        # 币安单向持仓模式（净仓模式）下，一个订单就能完成方向翻转：
+        #   当前多头0.8，目标空头0.2 → delta = -1.0 → SELL 1.0
+        #   币安自动先平多0.8，再开空0.2
 
-        target_pos = event.target_position  # 目标净仓位
-        current_pos = event.net_position    # 当前净仓位
+        target_pos = event.target_position
+        current_pos = event.net_position
 
-        # 判断是否需要交易
-        if target_pos == current_pos:
-            return  # 净仓位一致，无需调整
+        delta = target_pos - current_pos
+        if delta == 0:
+            return
 
-        # ── 2. 安全检查：reduce_only 订单必须有实际仓位 ────────────────────────
-        # 防止 AccountService 状态滞后导致对空仓发 reduce_only 被交易所拒绝
-        actual_pos = self._account.get_position(event.account_id, sym)
-
-        # ── 3. 构建订单（净仓模式）─────────────────────────────────────────
+        # ── 2. 构建订单 ───────────────────────────────────────────────────────
         price: Decimal | None = self._cache.get(f"price:{sym}")
 
-        # 核心逻辑：避免双向持仓锁仓
-        if target_pos == 0:
-            # 目标空仓 → 平掉所有仓位
-            if current_pos > 0:
-                order_side = Side.SELL
-                order_qty = abs(current_pos)
-                is_reducing = True
-            else:  # current_pos < 0
-                order_side = Side.BUY
-                order_qty = abs(current_pos)
-                is_reducing = True
-        elif current_pos == 0:
-            # 当前空仓 → 开仓
-            order_side = Side.BUY if target_pos > 0 else Side.SELL
-            order_qty = abs(target_pos)
-            is_reducing = False
-        elif (target_pos > 0 and current_pos > 0) or (target_pos < 0 and current_pos < 0):
-            # 同方向调整
-            if abs(target_pos) > abs(current_pos):
-                # 加仓
-                order_side = Side.BUY if target_pos > 0 else Side.SELL
-                order_qty = abs(target_pos) - abs(current_pos)
-                is_reducing = False
-            else:
-                # 减仓
-                order_side = Side.SELL if current_pos > 0 else Side.BUY
-                order_qty = abs(current_pos) - abs(target_pos)
-                is_reducing = True
+        if delta > 0:
+            order_side = Side.BUY
+            order_qty = delta
         else:
-            # 方向相反 → 先平仓（分步执行，避免锁仓）
-            # 第一笔：平掉当前仓位
-            order_side = Side.SELL if current_pos > 0 else Side.BUY
-            order_qty = abs(current_pos)
-            is_reducing = True
+            order_side = Side.SELL
+            order_qty = abs(delta)
 
-        # reduce_only 安全守卫：实际无仓位时不能发 reduce_only
-        if is_reducing and (actual_pos is None or actual_pos.is_empty):
-            log.warning("risk skip %s: reduce_only 但实际无仓位（net_pos=%.6f），"
-                        "状态可能滞后，跳过", sym, current_pos)
-            return
+        # 判断是否为纯减仓/平仓（reduce_only）
+        # 关键：只有 delta 不跨越零点（纯减仓不含开反向仓）才能设 reduce_only
+        # 例：多头0.8→目标0.3，delta=-0.5，SELL 0.5 全部减多 → reduce_only
+        # 例：多头0.8→目标-0.2，delta=-1.0，SELL 1.0 含平多+开空 → 非 reduce_only
+        # 判断标准：delta 与 current_pos 同号 → 说明同方向减仓，不跨越零点
+        is_reducing = False
+        if current_pos != 0 and delta != 0:
+            # delta 与 current_pos 同号意味着：调整后仓位更接近0但不翻越0
+            if (current_pos > 0 and delta < 0) or (current_pos < 0 and delta > 0):
+                # 方向相反：检查是否跨越零点
+                # 跨越零点 = |target| < |current| 且 target 与 current 异号
+                # 简化：如果 delta 的绝对值 > current 的绝对值，说明跨越了零点
+                if abs(delta) <= abs(current_pos):
+                    is_reducing = True
 
         order_qty = instrument.round_qty(order_qty)
         if order_qty < instrument.lot_size:
