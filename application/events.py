@@ -24,6 +24,7 @@ from decimal import Decimal
 from core.domain.event import Event
 from core.domain.instrument import Instrument
 from core.domain.order import Order, Side
+from core.domain.position import PositionSide
 
 
 # ── 行情事件 ─────────────────────────────────────────────────────────────────
@@ -83,14 +84,21 @@ class SignalEvent(Event):
 @dataclass(frozen=True)
 class TargetPositionEvent(Event):
     """
-    PortfolioService 计算后的目标仓位。
-    delta = target_size - current_size 决定需要下多大的订单。
+    PortfolioService 计算后的目标仓位（净仓模式）。
+
+    净仓位规则：
+      正数 = 多头仓位数量
+      负数 = 空头仓位数量
+      0    = 空仓
     """
-    account_id:   str        = ""
-    instrument:   Instrument = None
-    target_size:  Decimal    = Decimal(0)   # 目标持仓量（0 = 全平）
-    target_side:  Side       = Side.BUY
-    current_size: Decimal    = Decimal(0)   # 当前持仓量
+    account_id:      str              = ""
+    instrument:      Instrument       = None
+    target_size:     Decimal          = Decimal(0)   # 目标持仓量（绝对值）
+    target_side:     Side             = Side.BUY     # 目标仓位方向
+    current_size:    Decimal          = Decimal(0)   # 当前持仓量（绝对值）
+    current_side:    PositionSide | None = None      # 当前仓位方向
+    net_position:    Decimal          = Decimal(0)   # 当前净仓位（带符号）
+    target_position: Decimal          = Decimal(0)   # 目标净仓位（带符号）
 
 
 # ── 风控事件 ─────────────────────────────────────────────────────────────────

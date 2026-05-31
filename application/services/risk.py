@@ -19,7 +19,6 @@ from decimal import Decimal
 from uuid import uuid4
 
 from core.domain.order import Order, OrderStatus, OrderType, Side
-from core.domain.position import PositionSide
 from core.ports.account import AccountPort
 from core.ports.bus import EventBusPort
 from core.ports.cache import CachePort
@@ -73,66 +72,56 @@ class RiskService:
         instrument = event.instrument
         sym        = instrument.symbol
 
-        # ── 1. 计算下单 delta ─────────────────────────────────────────────────
-        # target_side 决定仓位方向（LONG/SHORT），target_size 是数量（永远为正）
-        # current_size 是当前持仓数量（永远为正），current_side 是当前方向
+        # ── 1. 净仓模式判断 ─────────────────────────────────────────────────
+        # target_position: 正数=多头数量，负数=空头数量，0=空仓
+        # net_position: 当前净仓位（同上）
 
-        cur_pos = self._account.get_position(event.account_id, sym)
-        current_size = cur_pos.size if cur_pos else Decimal(0)
-        current_side = cur_pos.side if cur_pos else None
+        target_pos = event.target_position  # 目标净仓位
+        current_pos = event.net_position    # 当前净仓位
 
         # 判断是否需要交易
-        if current_side == event.target_side and current_size == event.target_size:
-            return  # 方向和数量都一致，无需交易
+        if target_pos == current_pos:
+            return  # 净仓位一致，无需调整
 
-        # ── 2. 构建订单 ───────────────────────────────────────────────────────
+        # ── 2. 构建订单（净仓模式）─────────────────────────────────────────
         price: Decimal | None = self._cache.get(f"price:{sym}")
 
-        # 计算订单方向和数量
-        # 关键：先处理方向翻转（多→空或空→多），再处理同方向调整
-        if current_side is None or current_size == 0:
-            # 无仓位 → 开仓
-            order_side = Side.BUY if event.target_side == Side.BUY else Side.SELL
-            order_qty = event.target_size
-            is_reducing = False
-        elif (current_side == PositionSide.LONG and event.target_side == Side.SELL):
-            # 多头 → 目标空头：先平多
-            order_side = Side.SELL
-            order_qty = current_size  # 平掉全部多头
-            is_reducing = True
-        elif (current_side == PositionSide.SHORT and event.target_side == Side.BUY):
-            # 空头 → 目标多头：先平空
-            order_side = Side.BUY
-            order_qty = current_size  # 平掉全部空头
-            is_reducing = True
-        elif current_side == PositionSide.LONG:
-            # 多头 → 调整多头数量
-            delta = event.target_size - current_size
-            if abs(delta) < instrument.lot_size:
-                return
-            if delta > 0:
-                order_side = Side.BUY
-                order_qty = delta
-                is_reducing = False
-            else:
+        # 核心逻辑：避免双向持仓锁仓
+        if target_pos == 0:
+            # 目标空仓 → 平掉所有仓位
+            if current_pos > 0:
+                # 多头 → 平多
                 order_side = Side.SELL
-                order_qty = abs(delta)
+                order_qty = abs(current_pos)
                 is_reducing = True
-        elif current_side == PositionSide.SHORT:
-            # 空头 → 调整空头数量
-            delta = event.target_size - current_size
-            if abs(delta) < instrument.lot_size:
-                return
-            if delta > 0:
-                order_side = Side.SELL
-                order_qty = delta
+            else:  # current_pos < 0
+                # 空头 → 平空
+                order_side = Side.BUY
+                order_qty = abs(current_pos)
+                is_reducing = True
+        elif current_pos == 0:
+            # 当前空仓 → 开仓
+            order_side = Side.BUY if target_pos > 0 else Side.SELL
+            order_qty = abs(target_pos)
+            is_reducing = False
+        elif (target_pos > 0 and current_pos > 0) or (target_pos < 0 and current_pos < 0):
+            # 同方向调整
+            if abs(target_pos) > abs(current_pos):
+                # 加仓
+                order_side = Side.BUY if target_pos > 0 else Side.SELL
+                order_qty = abs(target_pos) - abs(current_pos)
                 is_reducing = False
             else:
-                order_side = Side.BUY
-                order_qty = abs(delta)
+                # 减仓
+                order_side = Side.SELL if current_pos > 0 else Side.BUY
+                order_qty = abs(current_pos) - abs(target_pos)
                 is_reducing = True
         else:
-            return
+            # 方向相反 → 先平仓（分步执行，避免锁仓）
+            # 第一笔：平掉当前仓位
+            order_side = Side.SELL if current_pos > 0 else Side.BUY
+            order_qty = abs(current_pos)
+            is_reducing = True
 
         order_qty = instrument.round_qty(order_qty)
         if order_qty < instrument.lot_size:

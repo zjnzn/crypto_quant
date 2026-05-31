@@ -21,6 +21,7 @@ import logging
 from decimal import Decimal
 
 from core.domain.order import Side
+from core.domain.position import PositionSide
 from core.ports.account import AccountPort
 from core.ports.bus import EventBusPort
 from core.ports.cache import CachePort
@@ -124,19 +125,29 @@ class PortfolioService:
             if target_size > 0 and target_size < min_qty_for_notional:
                 target_size = min_qty_for_notional
 
-        # ── delta 检查 ────────────────────────────────────────────────────────
+        # ── delta 检查（净仓模式）────────────────────────────────────────────────
         cur_pos = self._account.get_position(self._account_id, sym)
         current_size = cur_pos.size if cur_pos else Decimal(0)
+        current_side = cur_pos.side if cur_pos else None
 
         # ★ 计入在途订单（已提交但未成交的增量），防止重复下单
-        # PortfolioService 需要访问 OMS 来获取在途订单
         pending_delta = Decimal(0)
         if self._oms is not None:
             pending_delta = self._oms.compute_pending_delta(sym)
 
-        # effective_size = 已确认持仓 + 在途增量
-        effective_size = current_size + pending_delta
-        delta = abs(target_size - effective_size)
+        # 当前净仓位：多头为正，空头为负，空仓为 0
+        if current_side is None:
+            net_position = pending_delta  # 只有在途订单
+        elif current_side == PositionSide.LONG:
+            net_position = current_size + pending_delta
+        else:  # SHORT
+            net_position = -(current_size + pending_delta)
+
+        # 目标净仓位：多头为正，空头为负，0 为空仓
+        target_position = target_size if target_side == Side.BUY else -target_size
+
+        # 检查是否需要调整
+        delta = abs(target_position - net_position)
         if delta < event.instrument.lot_size:
             return
 
@@ -152,11 +163,14 @@ class PortfolioService:
 
         self._bus.publish(
             TargetPositionEvent(
-                account_id   = self._account_id,
-                instrument   = event.instrument,
-                target_size  = target_size,
-                target_side  = target_side,
-                current_size = current_size,
+                account_id     = self._account_id,
+                instrument     = event.instrument,
+                target_size    = target_size,
+                target_side    = target_side,
+                current_size   = current_size,
+                current_side   = current_side,
+                net_position   = net_position,      # 当前净仓位（带方向）
+                target_position= target_position,   # 目标净仓位（带方向）
             ).caused_by(event)
         )
 
