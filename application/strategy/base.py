@@ -69,3 +69,35 @@ class Strategy(Protocol):
     def on_stop(self, ctx: "StrategyContext") -> None:
         """Engine 停止时调用。用于保存状态、释放资源。"""
         ...
+
+
+class BaseStrategy:
+    """策略基类，提供所有接口方法的默认 no-op 实现。
+
+    子类只需覆盖感兴趣的方法，其余自动返回空列表 / 无操作。
+    """
+
+    name: str = ""
+    version: str = ""
+
+    def on_trade(self, event: "TradeEvent",
+                 ctx: "StrategyContext") -> list[Signal]:
+        return []
+
+    def on_book(self, event: "BookEvent",
+                ctx: "StrategyContext") -> list[Signal]:
+        return []
+
+    def on_funding(self, event: "FundingRateEvent",
+                   ctx: "StrategyContext") -> list[Signal]:
+        return []
+
+    def on_fill(self, event: "FillEvent",
+                ctx: "StrategyContext") -> None:
+        pass
+
+    def on_start(self, ctx: "StrategyContext") -> None:
+        pass
+
+    def on_stop(self, ctx: "StrategyContext") -> None:
+        pass
