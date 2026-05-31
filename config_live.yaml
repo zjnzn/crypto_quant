@@ -27,7 +27,7 @@ account:
 
 risk:
   max_weight:       0.35    # 小账户(14U): 5U最小名义值/14.72≈34%
-  max_leverage:     100       # 全局最大杠杆（小账户保守）
+  max_leverage:     20       # 全局最大杠杆（小账户保守）
   max_drawdown:     0.05    # 5% 回撤熔断
   max_funding_rate: 0.003   # 0.3%/8h 资金费率上限
 
