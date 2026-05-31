@@ -50,6 +50,5 @@ strategies:
 
   - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
     params:
-      min_rate:      0.001
-      max_rate:      0.005
-      cooldown_bars: 8
+      threshold:  0.001   # 资金费率阈值
+      max_score:  0.6     # 最大信号分数

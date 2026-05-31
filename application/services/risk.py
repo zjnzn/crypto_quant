@@ -19,6 +19,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from core.domain.order import Order, OrderStatus, OrderType, Side
+from core.domain.position import PositionSide
 from core.ports.account import AccountPort
 from core.ports.bus import EventBusPort
 from core.ports.cache import CachePort
@@ -73,36 +74,73 @@ class RiskService:
         sym        = instrument.symbol
 
         # ── 1. 计算下单 delta ─────────────────────────────────────────────────
-        delta = event.target_size - event.current_size
-        if abs(delta) < instrument.lot_size:
-            return   # delta 太小，忽略（PortfolioService 应已过滤，双重保险）
+        # target_side 决定仓位方向（LONG/SHORT），target_size 是数量（永远为正）
+        # current_size 是当前持仓数量（永远为正），current_side 是当前方向
+
+        cur_pos = self._account.get_position(event.account_id, sym)
+        current_size = cur_pos.size if cur_pos else Decimal(0)
+        current_side = cur_pos.side if cur_pos else None
+
+        # 判断是否需要交易
+        if current_side == event.target_side and current_size == event.target_size:
+            return  # 方向和数量都一致，无需交易
 
         # ── 2. 构建订单 ───────────────────────────────────────────────────────
         price: Decimal | None = self._cache.get(f"price:{sym}")
-        # ── 订单方向由 delta 符号决定，而非 target_side ──────────────────────
-        # target_side 是目标仓位方向（多/空），不是订单方向。
-        # 当 current > target（需要减仓）时：delta < 0 → SELL 单
-        # 当 current < target（需要增仓）时：delta > 0 → BUY 单
-        is_reducing  = delta < 0
-        order_side   = Side.SELL if is_reducing else Side.BUY
 
-        # 减仓时，将数量限制在已知持仓范围内，
-        # 防止因缺少 FillEvent 回调导致仓位记录滞后时超量下单（-2022）。
-        order_qty = instrument.round_qty(abs(delta))
-        if is_reducing:
-            cur_pos  = self._account.get_position(
-                event.account_id, instrument.symbol)
-            cur_size = cur_pos.size if cur_pos else Decimal(0)
-            # 注意：这里只减去在途卖单，与 compute_pending_delta 逻辑不同
-            # 因为 reduce_only 只关心已有的卖出挂单，避免超额平仓
-            if self._oms is not None:
-                for pending in self._oms.get_open_orders(sym):
-                    if pending.side == Side.SELL:
-                        cur_size -= pending.remaining_qty
-            order_qty = instrument.round_qty(min(order_qty, cur_size))
-            if order_qty < instrument.lot_size:
-                log.debug("reduce_only qty capped to 0, skip: %s", instrument.symbol)
-                return
+        # 计算订单方向和数量
+        if event.target_side == Side.SELL:
+            # 目标是空头：需要开空或加空
+            if current_side == PositionSide.LONG or current_side is None:
+                # 当前多头或无仓位 → 开空（SELL, reduce_only=False）
+                order_side = Side.SELL
+                order_qty = event.target_size
+                is_reducing = False
+            elif current_side == PositionSide.SHORT:
+                # 当前空头 → 调整空头数量
+                delta = event.target_size - current_size
+                if abs(delta) < instrument.lot_size:
+                    return
+                if delta > 0:
+                    # 加空
+                    order_side = Side.SELL
+                    order_qty = delta
+                    is_reducing = False
+                else:
+                    # 减空（平部分空头）
+                    order_side = Side.BUY
+                    order_qty = abs(delta)
+                    is_reducing = True
+            else:
+                return  # NET 模式暂不支持
+        else:  # target_side == Side.BUY
+            # 目标是多头
+            if current_side == PositionSide.SHORT or current_side is None:
+                # 当前空头或无仓位 → 开多（BUY, reduce_only=False）
+                order_side = Side.BUY
+                order_qty = event.target_size
+                is_reducing = False
+            elif current_side == PositionSide.LONG:
+                # 当前多头 → 调整多头数量
+                delta = event.target_size - current_size
+                if abs(delta) < instrument.lot_size:
+                    return
+                if delta > 0:
+                    # 加多
+                    order_side = Side.BUY
+                    order_qty = delta
+                    is_reducing = False
+                else:
+                    # 减多（平部分多头）
+                    order_side = Side.SELL
+                    order_qty = abs(delta)
+                    is_reducing = True
+            else:
+                return  # NET 模式暂不支持
+
+        order_qty = instrument.round_qty(order_qty)
+        if order_qty < instrument.lot_size:
+            return
 
         order = Order(
             instrument  = instrument,

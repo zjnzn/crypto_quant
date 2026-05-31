@@ -71,7 +71,7 @@ def make_ctx(cache=None, account=None):
 class TestFundingRateArb:
     def test_high_positive_rate_short_signal(self, btc_perp) -> None:
         """资金费率高（正）→ 做空信号（score < 0）。"""
-        strat = FundingRateArbStrategy(min_rate=0.001, max_rate=0.005)
+        strat = FundingRateArbStrategy(threshold=0.001, max_score=0.6)
         ctx   = make_ctx()
         event = FundingRateEvent(instrument=btc_perp, rate=Decimal("0.003"))
 
@@ -82,7 +82,7 @@ class TestFundingRateArb:
 
     def test_high_negative_rate_long_signal(self, btc_perp) -> None:
         """资金费率为负（空头付费）→ 做多信号（score > 0）。"""
-        strat = FundingRateArbStrategy(min_rate=0.001, max_rate=0.005)
+        strat = FundingRateArbStrategy(threshold=0.001, max_score=0.6)
         ctx   = make_ctx()
         event = FundingRateEvent(instrument=btc_perp, rate=Decimal("-0.003"))
 
@@ -92,7 +92,7 @@ class TestFundingRateArb:
 
     def test_low_rate_no_signal(self, btc_perp) -> None:
         """资金费率低于阈值 → 无信号。"""
-        strat = FundingRateArbStrategy(min_rate=0.001)
+        strat = FundingRateArbStrategy(threshold=0.001)
         ctx   = make_ctx()
         event = FundingRateEvent(instrument=btc_perp, rate=Decimal("0.0005"))
 
@@ -100,49 +100,34 @@ class TestFundingRateArb:
         assert sigs == []
 
     def test_zero_rate_no_signal(self, btc_perp) -> None:
-        strat = FundingRateArbStrategy(min_rate=0.001)
+        strat = FundingRateArbStrategy(threshold=0.001)
         ctx   = make_ctx()
         event = FundingRateEvent(instrument=btc_perp, rate=Decimal("0"))
         assert strat.on_funding(event, ctx) == []
 
     def test_max_rate_full_score(self, btc_perp) -> None:
-        """费率达到 max_rate → score = -1（满仓做空）。"""
-        strat = FundingRateArbStrategy(min_rate=0.001, max_rate=0.005)
+        """费率极高 → score 达到 max_score 上限。"""
+        strat = FundingRateArbStrategy(threshold=0.001, max_score=0.6)
         ctx   = make_ctx()
         event = FundingRateEvent(instrument=btc_perp, rate=Decimal("0.005"))
 
         sigs = strat.on_funding(event, ctx)
-        assert abs(sigs[0].score + 1.0) < 0.001, f"max rate 应 score≈-1, 得 {sigs[0].score}"
+        assert abs(sigs[0].score + 0.6) < 0.001, f"高费率应 score≈-0.6, 得 {sigs[0].score}"
 
-    def test_decay_on_trade(self, btc_perp) -> None:
-        """资金费率触发后，后续 K 线信号逐渐衰减。"""
-        strat = FundingRateArbStrategy(min_rate=0.001, max_rate=0.005,
-                                       cooldown_bars=4)
+    def test_on_trade_returns_empty(self, btc_perp) -> None:
+        """FundingRateArbStrategy.on_trade 不产生信号（仅跟踪 bar 计数）。"""
+        strat = FundingRateArbStrategy(threshold=0.001, max_score=0.6)
         ctx   = make_ctx()
 
-        # 触发资金费率信号
-        strat.on_funding(FundingRateEvent(instrument=btc_perp,
-                                           rate=Decimal("0.005")), ctx)
-
-        # 第 1 根 K 线：应有衰减信号
-        sig1 = strat.on_trade(TradeEvent(instrument=btc_perp,
-                                          price=Decimal("65000"),
-                                          qty=Decimal("1")), ctx)
-        # 第 3 根 K 线
-        strat.on_trade(TradeEvent(instrument=btc_perp,
-                                   price=Decimal("65100"),
-                                   qty=Decimal("1")), ctx)
-        sig3 = strat.on_trade(TradeEvent(instrument=btc_perp,
-                                          price=Decimal("65200"),
-                                          qty=Decimal("1")), ctx)
-
-        if sig1 and sig3:
-            # 后续信号应 ≤ 初始信号（衰减）
-            assert abs(sig3[0].score) <= abs(sig1[0].score) + 0.05
+        # on_trade 不产生信号
+        sigs = strat.on_trade(TradeEvent(instrument=btc_perp,
+                                         price=Decimal("65000"),
+                                         qty=Decimal("1")), ctx)
+        assert sigs == []
 
     def test_score_range_valid(self, btc_perp) -> None:
         """信号分数始终在 [-1, 1]。"""
-        strat = FundingRateArbStrategy(min_rate=0.0001, max_rate=0.001)
+        strat = FundingRateArbStrategy(threshold=0.0001, max_score=0.6)
         ctx   = make_ctx()
         for rate in [0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01]:
             event = FundingRateEvent(instrument=btc_perp,
@@ -153,13 +138,13 @@ class TestFundingRateArb:
                 assert  0.0 <= sig.confidence <= 1.0
 
     def test_meta_contains_rate(self, btc_perp) -> None:
-        strat = FundingRateArbStrategy(min_rate=0.001, max_rate=0.005)
+        strat = FundingRateArbStrategy(threshold=0.001, max_score=0.6)
         ctx   = make_ctx()
         sigs  = strat.on_funding(
             FundingRateEvent(instrument=btc_perp, rate=Decimal("0.003")), ctx
         )
         assert "rate" in sigs[0].meta
-        assert "ann_rate" in sigs[0].meta
+        assert "threshold" in sigs[0].meta
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -238,7 +223,7 @@ class TestCsvFeedFunding:
         bus, cache = SyncEventBus(), MemoryCache()
         account    = AccountService(bus=bus, cache=cache)
         clock      = SimClock()
-        strat      = FundingRateArbStrategy(min_rate=0.001, max_rate=0.005)
+        strat      = FundingRateArbStrategy(threshold=0.001, max_score=0.6)
 
         from application.services.signal import SignalService
         signals = []
@@ -416,7 +401,7 @@ class TestThreeStrategyBacktest:
                 {"module": "strategies.mean_reversion.MeanReversionStrategy",
                  "params": {"window": 20, "z_entry": 1.5, "z_threshold": 2.5}},
                 {"module": "strategies.funding_rate_arb.FundingRateArbStrategy",
-                 "params": {"min_rate": 0.001, "max_rate": 0.005}},
+                 "params": {"threshold": 0.001, "max_score": 0.6}},
             ]
         )
         system = build(cfg)
@@ -443,7 +428,7 @@ class TestThreeStrategyBacktest:
             initial_usdt=10_000.0,
             strategies=[
                 {"module": "strategies.funding_rate_arb.FundingRateArbStrategy",
-                 "params": {"min_rate": 0.001, "max_rate": 0.003}},
+                 "params": {"threshold": 0.001, "max_score": 0.6}},
             ]
         )
         system = build(cfg)
