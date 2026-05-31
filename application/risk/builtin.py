@@ -15,6 +15,7 @@ import logging
 from decimal import Decimal
 
 from core.domain.order import Order, Side
+from core.domain.position import PositionSide
 from core.ports.risk import RiskContext, RiskResult
 from application.risk.pipeline import RiskMiddleware, Next
 
@@ -61,7 +62,10 @@ class PositionLimitMiddleware(RiskMiddleware):
                 if min_weight_needed > self._max:
                     # 被迫超限：放宽到 max_weight * 1.5
                     max_allowed = self._max * Decimal("1.5")
-            if weight > max_allowed:
+            # 平仓方向订单：仓位减少，跳过权重检查
+            is_reducing = (cur and cur.side == PositionSide.LONG and order.side == Side.SELL) or \
+                          (cur and cur.side == PositionSide.SHORT and order.side == Side.BUY)
+            if not is_reducing and weight > max_allowed:
                 return RiskResult.reject(
                     f"{order.instrument.symbol} 权重 {weight:.1%} "
                     f"超过上限 {max_allowed:.1%}"
