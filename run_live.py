@@ -50,7 +50,7 @@ def build_instruments(symbols: list[str], exchange: str = "binance") -> dict:
         "ETHUSDT": Instrument(
             symbol="ETH-USDT-PERP", exchange=exchange,
             base="ETH", quote="USDT", kind=InstrumentKind.PERP,
-            tick_size=Decimal("0.01"), lot_size=Decimal("0.01"),
+            tick_size=Decimal("0.01"), lot_size=Decimal("0.001"),
             min_notional=Decimal("0.1"), max_leverage=100,
         ),
         "SOLUSDT": Instrument(
