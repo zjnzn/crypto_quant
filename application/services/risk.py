@@ -83,19 +83,21 @@ class RiskService:
         if target_pos == current_pos:
             return  # 净仓位一致，无需调整
 
-        # ── 2. 构建订单（净仓模式）─────────────────────────────────────────
+        # ── 2. 安全检查：reduce_only 订单必须有实际仓位 ────────────────────────
+        # 防止 AccountService 状态滞后导致对空仓发 reduce_only 被交易所拒绝
+        actual_pos = self._account.get_position(event.account_id, sym)
+
+        # ── 3. 构建订单（净仓模式）─────────────────────────────────────────
         price: Decimal | None = self._cache.get(f"price:{sym}")
 
         # 核心逻辑：避免双向持仓锁仓
         if target_pos == 0:
             # 目标空仓 → 平掉所有仓位
             if current_pos > 0:
-                # 多头 → 平多
                 order_side = Side.SELL
                 order_qty = abs(current_pos)
                 is_reducing = True
             else:  # current_pos < 0
-                # 空头 → 平空
                 order_side = Side.BUY
                 order_qty = abs(current_pos)
                 is_reducing = True
@@ -122,6 +124,12 @@ class RiskService:
             order_side = Side.SELL if current_pos > 0 else Side.BUY
             order_qty = abs(current_pos)
             is_reducing = True
+
+        # reduce_only 安全守卫：实际无仓位时不能发 reduce_only
+        if is_reducing and (actual_pos is None or actual_pos.is_empty):
+            log.warning("risk skip %s: reduce_only 但实际无仓位（net_pos=%.6f），"
+                        "状态可能滞后，跳过", sym, current_pos)
+            return
 
         order_qty = instrument.round_qty(order_qty)
         if order_qty < instrument.lot_size:

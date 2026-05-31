@@ -48,6 +48,12 @@ class AccountConfig:
 
 
 @dataclass
+class PortfolioConfig:
+    min_score:      float = 0.15   # 信号合并后最低分数阈值
+    order_cooldown: float = 0.0    # 同标的两次下单最小间隔（秒）
+
+
+@dataclass
 class MonitorConfig:
     warn_drawdown:     float = 0.03
     critical_drawdown: float = 0.05
@@ -59,9 +65,10 @@ class Config:
     bus:       BusConfig      = field(default_factory=BusConfig)
     cache:     CacheConfig    = field(default_factory=CacheConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
-    risk:      RiskConfig     = field(default_factory=RiskConfig)
-    account:   AccountConfig  = field(default_factory=AccountConfig)
-    monitor:   MonitorConfig  = field(default_factory=MonitorConfig)
+    risk:      RiskConfig       = field(default_factory=RiskConfig)
+    account:   AccountConfig    = field(default_factory=AccountConfig)
+    portfolio: PortfolioConfig  = field(default_factory=PortfolioConfig)
+    monitor:   MonitorConfig    = field(default_factory=MonitorConfig)
     strategies: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
@@ -77,6 +84,7 @@ class Config:
             execution  = ExecutionConfig(**raw.get("execution", {})),
             risk       = RiskConfig(**raw.get("risk", {})),
             account    = AccountConfig(**raw.get("account", {})),
+            portfolio  = PortfolioConfig(**raw.get("portfolio", {})),
             monitor    = MonitorConfig(**raw.get("monitor", {})),
             strategies = raw.get("strategies", []),
         )
