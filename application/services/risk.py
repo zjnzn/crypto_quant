@@ -89,54 +89,50 @@ class RiskService:
         price: Decimal | None = self._cache.get(f"price:{sym}")
 
         # 计算订单方向和数量
-        if event.target_side == Side.SELL:
-            # 目标是空头：需要开空或加空
-            if current_side == PositionSide.LONG or current_side is None:
-                # 当前多头或无仓位 → 开空（SELL, reduce_only=False）
-                order_side = Side.SELL
-                order_qty = event.target_size
-                is_reducing = False
-            elif current_side == PositionSide.SHORT:
-                # 当前空头 → 调整空头数量
-                delta = event.target_size - current_size
-                if abs(delta) < instrument.lot_size:
-                    return
-                if delta > 0:
-                    # 加空
-                    order_side = Side.SELL
-                    order_qty = delta
-                    is_reducing = False
-                else:
-                    # 减空（平部分空头）
-                    order_side = Side.BUY
-                    order_qty = abs(delta)
-                    is_reducing = True
-            else:
-                return  # NET 模式暂不支持
-        else:  # target_side == Side.BUY
-            # 目标是多头
-            if current_side == PositionSide.SHORT or current_side is None:
-                # 当前空头或无仓位 → 开多（BUY, reduce_only=False）
+        # 关键：先处理方向翻转（多→空或空→多），再处理同方向调整
+        if current_side is None or current_size == 0:
+            # 无仓位 → 开仓
+            order_side = Side.BUY if event.target_side == Side.BUY else Side.SELL
+            order_qty = event.target_size
+            is_reducing = False
+        elif (current_side == PositionSide.LONG and event.target_side == Side.SELL):
+            # 多头 → 目标空头：先平多
+            order_side = Side.SELL
+            order_qty = current_size  # 平掉全部多头
+            is_reducing = True
+        elif (current_side == PositionSide.SHORT and event.target_side == Side.BUY):
+            # 空头 → 目标多头：先平空
+            order_side = Side.BUY
+            order_qty = current_size  # 平掉全部空头
+            is_reducing = True
+        elif current_side == PositionSide.LONG:
+            # 多头 → 调整多头数量
+            delta = event.target_size - current_size
+            if abs(delta) < instrument.lot_size:
+                return
+            if delta > 0:
                 order_side = Side.BUY
-                order_qty = event.target_size
+                order_qty = delta
                 is_reducing = False
-            elif current_side == PositionSide.LONG:
-                # 当前多头 → 调整多头数量
-                delta = event.target_size - current_size
-                if abs(delta) < instrument.lot_size:
-                    return
-                if delta > 0:
-                    # 加多
-                    order_side = Side.BUY
-                    order_qty = delta
-                    is_reducing = False
-                else:
-                    # 减多（平部分多头）
-                    order_side = Side.SELL
-                    order_qty = abs(delta)
-                    is_reducing = True
             else:
-                return  # NET 模式暂不支持
+                order_side = Side.SELL
+                order_qty = abs(delta)
+                is_reducing = True
+        elif current_side == PositionSide.SHORT:
+            # 空头 → 调整空头数量
+            delta = event.target_size - current_size
+            if abs(delta) < instrument.lot_size:
+                return
+            if delta > 0:
+                order_side = Side.SELL
+                order_qty = delta
+                is_reducing = False
+            else:
+                order_side = Side.BUY
+                order_qty = abs(delta)
+                is_reducing = True
+        else:
+            return
 
         order_qty = instrument.round_qty(order_qty)
         if order_qty < instrument.lot_size:
