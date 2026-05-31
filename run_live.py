@@ -45,19 +45,49 @@ def build_instruments(symbols: list[str], exchange: str = "binance") -> dict:
             symbol="BTC-USDT-PERP", exchange=exchange,
             base="BTC", quote="USDT", kind=InstrumentKind.PERP,
             tick_size=Decimal("0.1"), lot_size=Decimal("0.001"),
-            min_notional=Decimal("0.1"), max_leverage=125,
+            min_notional=Decimal("5"), max_leverage=125,
         ),
         "ETHUSDT": Instrument(
             symbol="ETH-USDT-PERP", exchange=exchange,
             base="ETH", quote="USDT", kind=InstrumentKind.PERP,
             tick_size=Decimal("0.01"), lot_size=Decimal("0.001"),
-            min_notional=Decimal("0.1"), max_leverage=100,
+            min_notional=Decimal("5"), max_leverage=100,
         ),
         "SOLUSDT": Instrument(
             symbol="SOL-USDT-PERP", exchange=exchange,
             base="SOL", quote="USDT", kind=InstrumentKind.PERP,
             tick_size=Decimal("0.01"), lot_size=Decimal("0.1"),
-            min_notional=Decimal("0.1"), max_leverage=50,
+            min_notional=Decimal("5"), max_leverage=50,
+        ),
+        "DOGEUSDT": Instrument(
+            symbol="DOGE-USDT-PERP", exchange=exchange,
+            base="DOGE", quote="USDT", kind=InstrumentKind.PERP,
+            tick_size=Decimal("0.00001"), lot_size=Decimal("1"),
+            min_notional=Decimal("1"), max_leverage=50,
+        ),
+        "XRPUSDT": Instrument(
+            symbol="XRP-USDT-PERP", exchange=exchange,
+            base="XRP", quote="USDT", kind=InstrumentKind.PERP,
+            tick_size=Decimal("0.0001"), lot_size=Decimal("0.1"),
+            min_notional=Decimal("5"), max_leverage=50,
+        ),
+        "ADAUSDT": Instrument(
+            symbol="ADA-USDT-PERP", exchange=exchange,
+            base="ADA", quote="USDT", kind=InstrumentKind.PERP,
+            tick_size=Decimal("0.0001"), lot_size=Decimal("1"),
+            min_notional=Decimal("1"), max_leverage=50,
+        ),
+        "DOTUSDT": Instrument(
+            symbol="DOT-USDT-PERP", exchange=exchange,
+            base="DOT", quote="USDT", kind=InstrumentKind.PERP,
+            tick_size=Decimal("0.001"), lot_size=Decimal("0.1"),
+            min_notional=Decimal("5"), max_leverage=50,
+        ),
+        "LTCUSDT": Instrument(
+            symbol="LTC-USDT-PERP", exchange=exchange,
+            base="LTC", quote="USDT", kind=InstrumentKind.PERP,
+            tick_size=Decimal("0.01"), lot_size=Decimal("0.01"),
+            min_notional=Decimal("0.1"), max_leverage=75,
         ),
     }
     result = {}
