@@ -63,7 +63,7 @@ def build_instruments(symbols: list[str], exchange: str = "binance") -> dict:
             symbol="DOGE-USDT-PERP", exchange=exchange,
             base="DOGE", quote="USDT", kind=InstrumentKind.PERP,
             tick_size=Decimal("0.00001"), lot_size=Decimal("1"),
-            min_notional=Decimal("0.2"), max_leverage=50,
+            min_notional=Decimal("5"), max_leverage=50,
         ),
         "XRPUSDT": Instrument(
             symbol="XRP-USDT-PERP", exchange=exchange,
