@@ -115,6 +115,25 @@ class PortfolioService:
                 target_size = Decimal(0)
                 target_side = Side.BUY
 
+            # 确保目标仓位满足交易所最小名义值要求
+            # 如果计算出的 target_size 不够，向上取整到最小可下单量
+            min_qty_for_notional = (event.instrument.min_notional / price
+                                    ).quantize(Decimal(1), rounding="ROUND_UP"
+                                    ) * event.instrument.lot_size
+            min_qty_for_notional = event.instrument.round_qty(min_qty_for_notional)
+            if target_size > 0 and target_size < min_qty_for_notional:
+                # 检查最小下单量是否超过仓位权重限制
+                min_weight = min_qty_for_notional * price / nav
+                if min_weight <= self._max_weight * 2:
+                    # 允许适度超限（最多2倍），否则无法交易小账户
+                    target_size = min_qty_for_notional
+                else:
+                    # 超限太多，放弃本次信号
+                    log.debug("target %s: min_qty=%.4f 需权重 %.1f%% 远超上限 %.1f%%, 跳过",
+                              sym, min_qty_for_notional, min_weight * 100,
+                              self._max_weight * 100)
+                    return
+
         # ── delta 检查 ────────────────────────────────────────────────────────
         cur_pos = self._account.get_position(self._account_id, sym)
         current_size = cur_pos.size if cur_pos else Decimal(0)
