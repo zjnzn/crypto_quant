@@ -122,17 +122,7 @@ class PortfolioService:
                                     ) * event.instrument.lot_size
             min_qty_for_notional = event.instrument.round_qty(min_qty_for_notional)
             if target_size > 0 and target_size < min_qty_for_notional:
-                # 检查最小下单量是否超过仓位权重限制
-                min_weight = min_qty_for_notional * price / nav
-                if min_weight <= self._max_weight * 2:
-                    # 允许适度超限（最多2倍），否则无法交易小账户
-                    target_size = min_qty_for_notional
-                else:
-                    # 超限太多，放弃本次信号
-                    log.debug("target %s: min_qty=%.4f 需权重 %.1f%% 远超上限 %.1f%%, 跳过",
-                              sym, min_qty_for_notional, min_weight * 100,
-                              self._max_weight * 100)
-                    return
+                target_size = min_qty_for_notional
 
         # ── delta 检查 ────────────────────────────────────────────────────────
         cur_pos = self._account.get_position(self._account_id, sym)

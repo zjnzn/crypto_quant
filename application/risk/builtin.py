@@ -53,10 +53,18 @@ class PositionLimitMiddleware(RiskMiddleware):
             )
         if ctx.nav_usdt > 0:
             weight = abs(new_size * est_price) / ctx.nav_usdt
-            if weight > self._max:
+            # 小账户容差：当 NAV 不足以开交易所最小仓位时，允许适度超限
+            # 只在 min_notional / nav > max_weight 时启用（即"被迫超限"）
+            max_allowed = self._max
+            if ctx.nav_usdt > 0:
+                min_weight_needed = order.instrument.min_notional / ctx.nav_usdt
+                if min_weight_needed > self._max:
+                    # 被迫超限：放宽到 max_weight * 1.5
+                    max_allowed = self._max * Decimal("1.5")
+            if weight > max_allowed:
                 return RiskResult.reject(
                     f"{order.instrument.symbol} 权重 {weight:.1%} "
-                    f"超过上限 {self._max:.1%}"
+                    f"超过上限 {max_allowed:.1%}"
                 )
         return call_next(order, ctx)
 
