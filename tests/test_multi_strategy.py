@@ -122,7 +122,7 @@ def build_full_system(btc_perp, strategies, initial_usdt=10_000):
                   strategies=registry.all(), make_ctx=make_ctx)
     portfolio = PortfolioService(bus=bus, cache=cache, account=account,
                                  account_id="main", max_weight=0.10,
-                                 min_score=0.15, allow_short=True)
+                                 allow_short=True)
     RiskService(bus=bus,
                 pipeline=RiskPipeline([
                     MinNotionalMiddleware(),
@@ -299,7 +299,7 @@ class TestMultiStrategyPortfolio:
         SignalService(bus1, cache1, [MomentumStrategy(window=5, scale=0.02,
                       min_score=0.1)], make_ctx1)
         PortfolioService(bus1, cache1, acct1, "main",
-                         max_weight=0.10, min_score=0.1)
+                         max_weight=0.10)
         bus1.subscribe(TargetPositionEvent, targets1.append)
 
         # 动量 + 均值回归
@@ -316,7 +316,7 @@ class TestMultiStrategyPortfolio:
                                              z_threshold=1.0)],
                       make_ctx2)
         PortfolioService(bus2, cache2, acct2, "main",
-                         max_weight=0.10, min_score=0.1)
+                         max_weight=0.10)
         bus2.subscribe(TargetPositionEvent, targets2.append)
 
         # 模拟单调上涨（动量正，均值回归负）
@@ -355,7 +355,7 @@ class TestMultiStrategyPortfolio:
                        MomentumStrategy(window=8, scale=0.03,
                                         min_score=0.05, name_override="m2")],
                       make_ctx)
-        PortfolioService(bus, cache, acct, "main", max_weight=0.10, min_score=0.05)
+        PortfolioService(bus, cache, acct, "main", max_weight=0.10)
         bus.subscribe(TargetPositionEvent, targets.append)
 
         for i in range(12):
@@ -473,7 +473,7 @@ class TestMultiStrategyBacktest:
             return StrategyContext("main", sid, clock, cache, account)
 
         portfolio = PortfolioService(
-            bus, cache, account, "main", min_score=0.05
+            bus, cache, account, "main"
         )
         SignalService(bus, cache,
                       [MomentumStrategy(window=5, scale=0.02,

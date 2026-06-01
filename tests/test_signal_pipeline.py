@@ -132,7 +132,7 @@ def build_pipeline(bus, cache, account, btc_perp,
     SignalService(bus=bus, cache=cache,
                   strategies=registry.all(), make_ctx=make_ctx)
     PortfolioService(bus=bus, cache=cache, account=account,
-                     account_id="main", max_weight=max_weight, min_score=0.15)
+                     account_id="main", max_weight=max_weight)
     risk_pipeline = RiskPipeline([
         MinNotionalMiddleware(),
         PositionLimitMiddleware(max_weight=0.20),

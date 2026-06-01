@@ -152,9 +152,9 @@ class FundingRateMiddleware(RiskMiddleware):
 
 
 class MinNotionalMiddleware(RiskMiddleware):
-    """订单名义价值必须满足交易所最小要求。"""
+    """订单名义价值必须满足交易所最小要求。reduce_only 订单跳过（与币安行为一致）。"""
     name = "min_notional"
-    check_reduce_only = False   # 平仓单也需满足最小名义价值
+    check_reduce_only = True   # reduce_only 订单直接放行（币安不检查平仓单名义值）
 
     def _do_check(self, order: Order, ctx: RiskContext,
                   call_next: Next) -> RiskResult:
