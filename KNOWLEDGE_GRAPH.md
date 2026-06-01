@@ -127,14 +127,7 @@ on_funding 信号（辅助）：
 4. 确定方向：
    target_side = BUY if combined_score > 0 else SELL
 
-5. 最小名义值补足：
-   min_qty_for_notional = ceil(min_notional / price) × lot_size
-   if target_size > 0 and target_size < min_qty_for_notional:
-       target_size = min_qty_for_notional
-   例：min_notional=5, price=0.1001, lot_size=1
-   min_qty_for_notional = ceil(5/0.1001) × 1 = 50 × 1 = 50
-
-6. 空头检查：
+5. 空头检查：
    if not allow_short and target_side == SELL:
        target_size = 0, target_side = BUY
 ```
@@ -165,12 +158,7 @@ on_funding 信号（辅助）：
    delta = |target_position - net_position|
    if delta < lot_size → 不发布事件（变动太小）
 
-6. 下单冷却检查：
-   if order_cooldown > 0:
-       if monotonic_now - last_order_ts[symbol] < order_cooldown:
-           跳过（防止频繁交易）
-
-7. 发布 TargetPositionEvent
+6. 发布 TargetPositionEvent
 ```
 
 ### 2.3 目标仓位 → 订单构建
@@ -466,8 +454,7 @@ Position.calc_unrealized_pnl(mark_price):
 mode: live
 
 portfolio:
-  min_score:      0.30    # 信号合并后最低分数阈值
-  order_cooldown: 60      # 同标的两次下单最小间隔（秒）
+  min_score: 0.30    # 信号合并后最低分数阈值
 
 risk:
   max_weight:       0.35  # 仓位权重上限（小账户容差1.5x → 实际0.525）
@@ -502,18 +489,15 @@ max_weight = 0.35，小账户容差 max_allowed = 0.525
   target_size = 0.667 × 0.35 × 11.935 / 0.1006 = 27.8
   round_qty → 27（或28）
 
-  最小名义值补足：min_qty = ceil(5/0.1006) × 1 = 50
-  27 < 50 → target_size = 50
-
   target_side = SELL（combined_score < 0）
 
 当前净仓位：net_position = +50（多头50）
-目标净仓位：target_position = -50（空头50）
+目标净仓位：target_position = -27（空头27）
 
-delta = -50 - 50 = -100
-→ SELL 100 DOGE, reduce_only = False（跨越零点）
+delta = -27 - 50 = -77
+→ SELL 77 DOGE, reduce_only = False（跨越零点）
 
-币安执行：先平多50，再开空50 → 一步完成
+币安执行：先平多50，再开空27 → 一步完成
 ```
 
 ## 五、数据流向图
@@ -530,7 +514,7 @@ WebSocket aggTrade ──TradeEvent──→ SignalService
                                        │ target_size = score × weight × nav / price
                                        │ net_position = signed(current + pending)
                                        │ target_position = signed(target)
-                                       │ delta检查 + 冷却检查
+                                       │ delta检查
                                        │ → TargetPositionEvent
                                        ▼
                                   RiskService
@@ -579,10 +563,9 @@ WebSocket aggTrade ──TradeEvent──→ SignalService
 1. **delta 一步计算**：`delta = target_position - net_position`，方向翻转一步完成
 2. **reduce_only 仅限纯减仓**：不跨越零点时设 reduce_only，方向翻转为 False
 3. **小账户容差**：min_notional/nav > max_weight 时，允许 1.5× max_weight
-4. **最小名义值补足**：target_size < min_qty_for_notional 时向上取整
-5. **order_cooldown**：同标的两次下单最小间隔秒数
-6. **在途订单追踪**：pending_delta 计入 net_position，防止重复下单
-7. **币安单向持仓**：不设 positionSide 参数，SELL 自动先平多再开空
-8. **Decimal 全局**：所有金融量使用 Decimal
-9. **不可变值对象**：Event/Order frozen=True，通过 with_update 产生新实例
-10. **三ID事件追踪**：event_id / correlation_id / causation_id
+4. **在途订单追踪**：pending_delta 计入 net_position，防止重复下单
+5. **币安单向持仓**：不设 positionSide 参数，SELL 自动先平多再开空
+6. **最小名义值**：由 MinNotionalMiddleware 在风控层检查
+7. **Decimal 全局**：所有金融量使用 Decimal
+8. **不可变值对象**：Event/Order frozen=True，通过 with_update 产生新实例
+9. **三ID事件追踪**：event_id / correlation_id / causation_id

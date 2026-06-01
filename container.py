@@ -150,13 +150,11 @@ def build(cfg: Config) -> System:
         make_ctx   = make_ctx,
     )
     portfolio_svc = PortfolioService(
-        bus            = bus,
-        cache          = cache,
-        account        = account_svc,
-        account_id     = account_id,
-        max_weight     = cfg.risk.max_weight,
-        min_score      = cfg.portfolio.min_score,
-        order_cooldown = cfg.portfolio.order_cooldown,
+        bus        = bus,
+        cache      = cache,
+        account    = account_svc,
+        account_id = account_id,
+        max_weight = cfg.risk.max_weight,
     )
     oms_svc = OMSService(
         bus      = bus,

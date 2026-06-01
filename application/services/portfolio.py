@@ -38,9 +38,7 @@ class PortfolioService:
         account:        AccountPort,
         account_id:     str,
         max_weight:     float = 0.10,
-        min_score:      float = 0.15,
         allow_short:    bool  = True,
-        order_cooldown: float = 0.0,   # 两次同标的下单最小间隔（秒）
         oms:           object | None = None,  # OMSService（延迟注入）
     ) -> None:
         self._bus        = bus
@@ -48,19 +46,15 @@ class PortfolioService:
         self._account    = account
         self._account_id = account_id
         self._max_weight     = Decimal(str(max_weight))
-        self._min_score      = min_score
         self._allow_short    = allow_short
-        self._order_cooldown = order_cooldown
         self._oms            = oms
 
         # (symbol, strategy_id) → SignalEvent
         self._signals: dict[tuple[str, str], SignalEvent] = {}
-        # 每个标的最后一次下单的单调时钟时间（防止重复下单）
-        self._last_order_ts: dict[str, float] = {}
 
         bus.subscribe(SignalEvent, self._on_signal)
-        log.info("PortfolioService 启动  max_weight=%.0f%%  min_score=%.2f  short=%s",
-                 max_weight * 100, min_score, allow_short)
+        log.info("PortfolioService 启动  max_weight=%.0f%%  short=%s",
+                 max_weight * 100, allow_short)
 
     def set_oms(self, oms: object) -> None:
         """延迟注入 OMS（container 中解决循环依赖）。"""
@@ -103,9 +97,8 @@ class PortfolioService:
 
         abs_score = Decimal(str(min(abs(combined_score), 1.0)))
 
-        if abs_score < self._min_score:
-            target_size = Decimal(0)
-            target_side = Side.BUY
+        if abs_score == Decimal(0):
+            return  # 信号为零，不调整仓位
         else:
             target_size = (abs_score
                            * self._max_weight * nav / price)
@@ -115,15 +108,6 @@ class PortfolioService:
             if not self._allow_short and target_side == Side.SELL:
                 target_size = Decimal(0)
                 target_side = Side.BUY
-
-            # 确保目标仓位满足交易所最小名义值要求
-            # 如果计算出的 target_size 不够，向上取整到最小可下单量
-            min_qty_for_notional = (event.instrument.min_notional / price
-                                    ).quantize(Decimal(1), rounding="ROUND_UP"
-                                    ) * event.instrument.lot_size
-            min_qty_for_notional = event.instrument.round_qty(min_qty_for_notional)
-            if target_size > 0 and target_size < min_qty_for_notional:
-                target_size = min_qty_for_notional
 
         # ── delta 检查（净仓模式）────────────────────────────────────────────────
         cur_pos = self._account.get_position(self._account_id, sym)
@@ -150,16 +134,6 @@ class PortfolioService:
         delta = abs(target_position - net_position)
         if delta < event.instrument.lot_size:
             return
-
-        # ── 下单冷却（防止填单前重复提交）────────────────────────────────────
-        import time as _time
-        if self._order_cooldown > 0:
-            last_ts = self._last_order_ts.get(sym, 0.0)
-            if _time.monotonic() - last_ts < self._order_cooldown:
-                log.debug("portfolio cooldown: %s 跳过（距上次下单 < %.0fs）",
-                          sym, self._order_cooldown)
-                return
-            self._last_order_ts[sym] = _time.monotonic()
 
         self._bus.publish(
             TargetPositionEvent(
