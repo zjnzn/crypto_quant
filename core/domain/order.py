@@ -18,16 +18,30 @@ class Side(Enum):
     BUY  = "buy"
     SELL = "sell"
 
+
+class PositionSide(Enum):
+    BOTH  = "both"
+    LONG  = "long"
+    SHORT = "short"
+
     @property
     def opposite(self) -> Side:
         return Side.SELL if self == Side.BUY else Side.BUY
 
 
 class OrderType(Enum):
-    MARKET      = "market"
-    LIMIT       = "limit"
-    STOP_MARKET = "stop_market"
-    STOP_LIMIT  = "stop_limit"
+    MARKET              = "market"
+    LIMIT               = "limit"
+    STOP_MARKET         = "stop_market"
+    STOP_LIMIT          = "stop_limit"
+    TAKE_PROFIT_MARKET  = "take_profit_market"
+    TAKE_PROFIT         = "take_profit"        # 止盈限价
+    TRAILING_STOP_MARKET = "trailing_stop_market"
+
+
+class WorkingType(Enum):
+    CONTRACT_PRICE = "contract_price"   # 标记价格触发
+    MARK_PRICE     = "mark_price"       # 最新标记价格触发
 
 
 class OrderStatus(Enum):
@@ -46,6 +60,31 @@ class OrderStatus(Enum):
     @property
     def is_active(self) -> bool:
         return self in (OrderStatus.SUBMITTED, OrderStatus.PART_FILLED)
+
+
+# 合法状态转换表
+_ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
+    OrderStatus.NEW: frozenset({
+        OrderStatus.SUBMITTED,
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+    }),
+    OrderStatus.SUBMITTED: frozenset({
+        OrderStatus.PART_FILLED,
+        OrderStatus.FILLED,
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+    }),
+    OrderStatus.PART_FILLED: frozenset({
+        OrderStatus.PART_FILLED,
+        OrderStatus.FILLED,
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+    }),
+    OrderStatus.FILLED: frozenset(),
+    OrderStatus.CANCELLED: frozenset(),
+    OrderStatus.REJECTED: frozenset(),
+}
 
 
 class TimeInForce(Enum):
@@ -83,13 +122,21 @@ class Order:
     qty:         Decimal
 
     # ── 可选字段（有默认值）──────────────────────────────────────────────
-    order_type:        OrderType    = OrderType.MARKET
-    id:                str          = field(default_factory=lambda: str(uuid4()))
-    strategy_id:       str          = ""
-    limit_price:       Decimal|None = None
-    stop_price:        Decimal|None = None
-    tif:               TimeInForce  = TimeInForce.GTC
-    reduce_only:       bool         = False
+    order_type:        OrderType       = OrderType.MARKET
+    id:                str             = field(default_factory=lambda: str(uuid4()))
+    strategy_id:       str             = ""
+    limit_price:       Decimal|None    = None
+    stop_price:        Decimal|None    = None
+    tif:               TimeInForce     = TimeInForce.GTC
+    reduce_only:       bool            = False
+
+    # ── Binance 条件单参数 ───────────────────────────────────────────────
+    position_side:     PositionSide|None = None    # 双向持仓模式需指定
+    close_position:    bool            = False     # 一键平仓（不需要 quantity）
+    working_type:      WorkingType     = WorkingType.CONTRACT_PRICE
+    price_protect:     bool            = True      # 条件单触发价格保护
+    callback_rate:     Decimal|None    = None      # TRAILING_STOP_MARKET 回调比例
+    activation_price:  Decimal|None    = None      # TRAILING_STOP_MARKET 激活价格
 
     # ── 成交后填充（不应在构造时传入）──────────────────────────────────
     status:            OrderStatus  = OrderStatus.NEW
@@ -113,7 +160,14 @@ class Order:
         return self.side == Side.BUY
 
     def with_update(self, **kwargs) -> Order:
-        """返回带更新字段的新 Order 实例（不可变更新）。"""
+        """返回带更新字段的新 Order 实例（不可变更新），含状态转换验证。"""
+        new_status = kwargs.get("status")
+        if new_status is not None and new_status != self.status:
+            allowed = _ORDER_TRANSITIONS.get(self.status, frozenset())
+            if new_status not in allowed:
+                raise ValueError(
+                    f"非法状态转换: {self.status.value} → {new_status.value}"
+                )
         return replace(self, **kwargs)
 
     def __repr__(self) -> str:

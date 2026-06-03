@@ -19,6 +19,10 @@ class AccountPort(Protocol):
         """获取指定账号指定标的的虚拟仓位（系统内部记录，非交易所实际仓位）。"""
         ...
 
+    def get_all_positions(self, account_id: str) -> dict[str, Position]:
+        """获取指定账号的所有非空仓位（symbol → Position）。"""
+        ...
+
     def get_nav_usdt(self, account_id: str) -> Decimal:
         """获取账号净值（USDT 计）。"""
         ...

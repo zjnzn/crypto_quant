@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import time
 import urllib.parse
@@ -28,10 +29,43 @@ from typing import Any
 
 from core.domain.balance import Balance
 from core.domain.instrument import Instrument, InstrumentKind
-from core.domain.order import Order, Side, TimeInForce
-from core.domain.position import MarginMode, Position, PositionSide
+from core.domain.order import Order, PositionSide, Side, TimeInForce, WorkingType
+from core.domain.position import MarginMode, Position, PositionSide as PosSide
 
 log = logging.getLogger(__name__)
+
+
+# ── Binance API 错误 ────────────────────────────────────────────────────────
+
+class BinanceAPIError(Exception):
+    """Binance API 错误，包含错误码和 HTTP 状态。"""
+    UNKNOWN            = -1000
+    DISCONNECTED       = -1001
+    UNAUTHORIZED       = -1002
+    TOO_MANY_REQUESTS  = -1003
+    TOO_MANY_ORDERS    = -1015
+    INVALID_QUANTITY   = -1013
+    TIMESTAMP_MISMATCH = -1021
+    INVALID_SIGNATURE  = -1022
+    NEW_ORDER_REJECTED = -2010
+    CANCEL_REJECTED    = -2011
+    NO_SUCH_ORDER      = -2013
+
+    def __init__(self, code: int, msg: str, http_status: int):
+        self.code = code
+        self.msg = msg
+        self.http_status = http_status
+        super().__init__(f"[{code}] {msg}")
+
+    @property
+    def retryable(self) -> bool:
+        """是否可重试（临时性错误）。"""
+        return self.code in (
+            self.DISCONNECTED,
+            self.TOO_MANY_REQUESTS,
+            self.TOO_MANY_ORDERS,
+            self.TIMESTAMP_MISMATCH,
+        )
 
 
 class BinanceFuturesExchange:
@@ -59,6 +93,7 @@ class BinanceFuturesExchange:
         self._api_secret = api_secret.encode()
         self._base       = self._BASE_TEST if testnet else self._BASE_LIVE
         self._session    = session or self._make_session()
+        self._symbol_cache: dict[str, str] = {}  # exchange_order_id → symbol
 
         log.info("BinanceFuturesExchange 初始化  base=%s  testnet=%s",
                  self._base, testnet)
@@ -70,24 +105,62 @@ class BinanceFuturesExchange:
         params = self._order_to_binance(order)
         resp   = self._signed_post("/fapi/v1/order", params)
         order_id = str(resp["orderId"])
+        # 缓存 order_id → symbol 映射，供 cancel/amend 使用
+        symbol = self._to_binance_symbol(order.instrument)
+        self._symbol_cache[order_id] = symbol
         log.info("binance submit  %s %s qty=%.4f → orderId=%s",
                  order.side.value, order.instrument.symbol,
                  order.qty, order_id)
         return order_id
 
-    def cancel(self, exchange_order_id: str) -> bool:
-        """撤单。"""
-        # 需要 symbol，这里简化（实际应从缓存查 symbol）
-        log.warning("cancel 需要 symbol，此简化实现可能失败: %s",
-                    exchange_order_id)
-        return False
+    def cancel(self, exchange_order_id: str, symbol: str = "") -> bool:
+        """撤单。需要 symbol（从缓存查或显式传入）。"""
+        if not symbol:
+            log.warning("cancel 需要 symbol，尝试从 pending 缓存查询")
+            symbol = self._symbol_cache.get(exchange_order_id, "")
+        if not symbol:
+            log.error("cancel 失败：缺少 symbol，exchange_order_id=%s",
+                      exchange_order_id)
+            return False
+        try:
+            self._signed_delete("/fapi/v1/order", {
+                "symbol":  symbol,
+                "orderId": exchange_order_id,
+            })
+            log.info("binance cancel  orderId=%s  symbol=%s", exchange_order_id, symbol)
+            return True
+        except Exception as e:
+            log.error("撤单失败: %s", e)
+            return False
 
     def amend(self, exchange_order_id: str,
               qty:   Decimal | None = None,
               price: Decimal | None = None) -> bool:
-        """Binance Futures 支持通过 PUT /fapi/v1/order 改单。"""
-        # Phase 5 实现
-        return False
+        """改单（PUT /fapi/v1/order）。需要 symbol + 至少一个修改参数。"""
+        symbol = self._symbol_cache.get(exchange_order_id, "")
+        if not symbol:
+            log.error("amend 失败：缺少 symbol，exchange_order_id=%s",
+                      exchange_order_id)
+            return False
+        params: dict[str, Any] = {
+            "symbol":  symbol,
+            "orderId": exchange_order_id,
+        }
+        if qty is not None:
+            params["quantity"] = str(qty)
+        if price is not None:
+            params["price"] = str(price)
+        if "quantity" not in params and "price" not in params:
+            log.error("amend 失败：至少需要 qty 或 price")
+            return False
+        try:
+            self._signed_put("/fapi/v1/order", params)
+            log.info("binance amend  orderId=%s  qty=%s  price=%s",
+                     exchange_order_id, qty, price)
+            return True
+        except Exception as e:
+            log.error("改单失败: %s", e)
+            return False
 
     def get_position(self, instrument: Instrument,
                      account_id: str) -> Position | None:
@@ -118,6 +191,50 @@ class BinanceFuturesExchange:
         })
         return Decimal(str(raw.get("lastFundingRate", "0")))
 
+    # ── 账户配置 ───────────────────────────────────────────────────────────
+
+    def set_leverage(self, symbol: str, leverage: int) -> dict:
+        """设置杠杆倍数 1~125。"""
+        return self._signed_post("/fapi/v1/leverage", {
+            "symbol":   symbol,
+            "leverage": leverage,
+        })
+
+    def set_margin_type(self, symbol: str, margin_type: str = "CROSSED") -> dict:
+        """设置保证金模式：CROSSED(全仓) / ISOLATED(逐仓)。"""
+        return self._signed_post("/fapi/v1/marginType", {
+            "symbol":     symbol,
+            "marginType": margin_type,
+        })
+
+    def get_position_mode(self) -> dict:
+        """查询仓位模式：dualSidePosition=true(双向) / false(单向)。"""
+        return self._signed_get("/fapi/v1/positionSide/dual", {})
+
+    def set_position_mode(self, dual_side: bool) -> dict:
+        """设置仓位模式：True=双向持仓 / False=单向持仓。"""
+        return self._signed_post("/fapi/v1/positionSide/dual", {
+            "dualSidePosition": "true" if dual_side else "false",
+        })
+
+    # ── 批量操作 ───────────────────────────────────────────────────────────
+
+    def batch_submit(self, orders: list[Order]) -> list[dict]:
+        """批量下单（最多 5 个）。"""
+        if len(orders) > 5:
+            raise ValueError("批量下单最多 5 个订单")
+        batch = [json.dumps(self._order_to_binance(o)) for o in orders]
+        return self._signed_post("/fapi/v1/batchOrders", {
+            "batchOrders": json.dumps(batch),
+        })
+
+    def batch_cancel(self, symbol: str, order_ids: list[str]) -> list[dict]:
+        """批量撤单。"""
+        return self._signed_delete("/fapi/v1/batchOrders", {
+            "symbol":      symbol,
+            "orderIdList": json.dumps(order_ids),
+        })
+
     def normalize_instrument(self, raw_symbol: str) -> Instrument:
         """
         将 Binance 私有 symbol（"BTCUSDT"）转换为系统统一 Instrument。
@@ -138,28 +255,72 @@ class BinanceFuturesExchange:
 
     def _order_to_binance(self, order: Order) -> dict:
         """将系统 Order 转换为 Binance API 参数。"""
+        from core.domain.order import OrderType
         params: dict[str, Any] = {
             "symbol":   self._to_binance_symbol(order.instrument),
             "side":     "BUY" if order.side == Side.BUY else "SELL",
-            "quantity": str(order.qty),
         }
 
-        from core.domain.order import OrderType
+        # ── 订单类型 + 必选参数 ─────────────────────────────────────────────
         if order.order_type == OrderType.MARKET:
             params["type"] = "MARKET"
+            params["quantity"] = str(order.qty)
         elif order.order_type == OrderType.LIMIT:
-            params["type"]  = "LIMIT"
+            params["type"] = "LIMIT"
+            params["quantity"] = str(order.qty)
             params["price"] = str(order.limit_price)
             params["timeInForce"] = self._tif(order.tif)
         elif order.order_type == OrderType.STOP_MARKET:
-            params["type"]      = "STOP_MARKET"
+            params["type"] = "STOP_MARKET"
             params["stopPrice"] = str(order.stop_price)
+            if not order.close_position:
+                params["quantity"] = str(order.qty)
+        elif order.order_type == OrderType.STOP_LIMIT:
+            params["type"] = "STOP"
+            params["quantity"] = str(order.qty)
+            params["price"] = str(order.limit_price)
+            params["stopPrice"] = str(order.stop_price)
+            params["timeInForce"] = self._tif(order.tif)
+        elif order.order_type == OrderType.TAKE_PROFIT_MARKET:
+            params["type"] = "TAKE_PROFIT_MARKET"
+            params["stopPrice"] = str(order.stop_price)
+            if not order.close_position:
+                params["quantity"] = str(order.qty)
+        elif order.order_type == OrderType.TAKE_PROFIT:
+            params["type"] = "TAKE_PROFIT"
+            params["quantity"] = str(order.qty)
+            params["price"] = str(order.limit_price)
+            params["stopPrice"] = str(order.stop_price)
+            params["timeInForce"] = self._tif(order.tif)
+        elif order.order_type == OrderType.TRAILING_STOP_MARKET:
+            params["type"] = "TRAILING_STOP_MARKET"
+            params["callbackRate"] = str(order.callback_rate)
+            if not order.close_position:
+                params["quantity"] = str(order.qty)
+            if order.activation_price is not None:
+                params["activationPrice"] = str(order.activation_price)
 
+        # ── 通用可选参数 ─────────────────────────────────────────────────────
         if order.reduce_only:
             params["reduceOnly"] = "true"
 
+        if order.position_side is not None:
+            params["positionSide"] = order.position_side.value.upper()
+
+        if order.close_position:
+            params["closePosition"] = "true"
+
+        # 条件单触发价格类型 + 价格保护
+        if order.order_type in (
+            OrderType.STOP_MARKET, OrderType.STOP_LIMIT,
+            OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT,
+            OrderType.TRAILING_STOP_MARKET,
+        ):
+            params["workingType"] = self._working_type(order.working_type)
+            params["priceProtect"] = "true" if order.price_protect else "false"
+
         if order.id:
-            params["newClientOrderId"] = order.id[:36]   # Binance 限 36 字符
+            params["newClientOrderId"] = order.id[:36]
 
         return params
 
@@ -171,6 +332,13 @@ class BinanceFuturesExchange:
             TimeInForce.FOK: "FOK",
             TimeInForce.GTX: "GTX",
         }.get(tif, "GTC")
+
+    @staticmethod
+    def _working_type(wt: WorkingType) -> str:
+        return {
+            WorkingType.CONTRACT_PRICE: "CONTRACT_PRICE",
+            WorkingType.MARK_PRICE:     "MARK_PRICE",
+        }.get(wt, "CONTRACT_PRICE")
 
     def _parse_position(
         self,
@@ -242,11 +410,18 @@ class BinanceFuturesExchange:
 
     @staticmethod
     def _check(resp: Any) -> Any:
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"Binance API 错误 {resp.status_code}: {resp.text[:200]}"
-            )
-        return resp.json()
+        """检查 API 响应，解析 Binance 错误码并抛出结构化异常。"""
+        if resp.status_code == 200:
+            return resp.json()
+        # 解析错误体
+        try:
+            body = resp.json()
+            code = body.get("code", BinanceAPIError.UNKNOWN)
+            msg  = body.get("msg", resp.text[:200])
+        except Exception:
+            code = BinanceAPIError.UNKNOWN
+            msg  = resp.text[:200]
+        raise BinanceAPIError(code=code, msg=msg, http_status=resp.status_code)
 
     def _make_session(self) -> Any:
         try:

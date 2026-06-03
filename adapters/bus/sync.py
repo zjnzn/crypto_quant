@@ -57,6 +57,10 @@ class SyncEventBus:
             try:
                 handler(event)
             except Exception:
+                # 关键 handler（标记了 _critical=True）异常必须向上传播，
+                # 避免系统与交易所状态不一致
+                if getattr(handler, '_critical', False):
+                    raise
                 log.exception(
                     "handler %s raised on %s (event_id=%s)",
                     handler.__qualname__, event.type_name, event.event_id

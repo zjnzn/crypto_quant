@@ -136,6 +136,24 @@ class OrderSubmittedEvent(Event):
 
 
 @dataclass(frozen=True)
+class OrderCreatedEvent(Event):
+    """订单创建确认（来自 WebSocket ORDER_TRADE_UPDATE executionType=NEW）。"""
+    exchange_order_id: str        = ""
+    instrument:        Instrument = None
+    side:              Side       = Side.BUY
+    order_type:        str        = ""
+    client_order_id:   str        = ""
+
+
+@dataclass(frozen=True)
+class OrderCanceledEvent(Event):
+    """订单撤销确认（来自 WebSocket ORDER_TRADE_UPDATE executionType=CANCELED）。"""
+    exchange_order_id: str        = ""
+    instrument:        Instrument = None
+    client_order_id:   str        = ""
+
+
+@dataclass(frozen=True)
 class FillEvent(Event):
     """
     来自交易所的成交回报。
@@ -149,13 +167,15 @@ class FillEvent(Event):
     commission:        Decimal    = Decimal(0)
     commission_asset:  str        = "USDT"
     is_maker:          bool       = False
+    realized_pnl:      Decimal    = Decimal(0)   # 本次成交已实现盈亏
 
 
 @dataclass(frozen=True)
 class OrderFilledEvent(Event):
-    """OMS 确认订单完全成交后发布，触发结算层。"""
+    """OMS 确认成交后发布，触发结算层。每次 FillEvent 都发布，携带本次增量。"""
     order:      Order   = None
-    avg_price:  Decimal = Decimal(0)
+    avg_price:  Decimal = Decimal(0)    # 本次成交价（而非累计均价）
+    fill_qty:   Decimal = Decimal(0)    # 本次增量成交量（而非累计）
     commission: Decimal = Decimal(0)
 
 
@@ -166,13 +186,16 @@ class SettlementEvent(Event):
     """
     SettlementService 发布，AccountService 订阅。
     解耦 OMS 和 AccountService——两者之间不直接依赖。
+    
+    注意：net_pnl 字段已移除，因为已实现盈亏只能在持仓更新时计算，
+    无法在结算事件中准确计算（需要知道当前持仓方向和入场价）。
+    实际的已实现盈亏由 AccountService._on_settlement 计算并发布。
     """
     account_id:  str        = ""
     instrument:  Instrument = None
     settled_qty: Decimal    = Decimal(0)
     side:        Side       = Side.BUY
     avg_price:   Decimal    = Decimal(0)
-    net_pnl:     Decimal    = Decimal(0)    # 已扣除手续费的净盈亏
     commission:  Decimal    = Decimal(0)
 
 
@@ -228,6 +251,7 @@ ALL_EVENT_TYPES = (
     TargetPositionEvent,
     RiskApprovedEvent, RiskRejectedEvent,
     OrderReadyEvent,
+    OrderCreatedEvent, OrderCanceledEvent,
     OrderSubmittedEvent, FillEvent, OrderFilledEvent,
     SettlementEvent,
     PositionUpdatedEvent, BalanceUpdatedEvent,

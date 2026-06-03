@@ -259,7 +259,8 @@ class TestMonitorMetrics:
         OMSService(bus=bus, exchange=exchange, cache=cache)
         SettlementService(bus=bus)
         monitor = MonitorService(bus=bus, cache=cache, account=account,
-                                 account_id="main", initial_nav=initial_usdt)
+                                 account_id="main", clock=SimClock(),
+                                 initial_nav=initial_usdt)
         return bus, cache, account, monitor
 
     def _buy(self, bus, btc_perp, price="65000", qty="0.01"):

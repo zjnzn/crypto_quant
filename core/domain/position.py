@@ -46,6 +46,12 @@ class Position:
 
     @property
     def is_empty(self) -> bool:
+        """判断仓位是否为空。
+        
+        注意：空仓位(size=0)时，entry_price 会被设置为 0，
+        这是为了避免后续开仓时错误继承旧的入场价。
+        在开仓逻辑中会正确设置新的 entry_price。
+        """
         return self.size == Decimal(0)
 
     def calc_unrealized_pnl(self, mark_price: Decimal) -> Decimal:

@@ -40,6 +40,15 @@ log = logging.getLogger(__name__)
 _ORDER_TTL = timedelta(days=1)
 
 
+def _critical_wrapper(fn):
+    """包装 handler 使其携带 _critical 标记，供 SyncEventBus 识别。"""
+    def wrapper(event):
+        return fn(event)
+    wrapper._critical = True
+    wrapper.__qualname__ = fn.__qualname__
+    return wrapper
+
+
 class OMSService:
     """
     订单生命周期管理。
@@ -60,6 +69,9 @@ class OMSService:
         self._pending: dict[str, Order] = {}   # order_id → active Order
         self._lock     = threading.RLock()
 
+        # 标记关键 handler，异常时向上传播而非吞掉
+        self._on_approved = _critical_wrapper(self._on_approved)
+        self._on_fill     = _critical_wrapper(self._on_fill)
         bus.subscribe(RiskApprovedEvent, self._on_approved)
         bus.subscribe(FillEvent,         self._on_fill)
 
@@ -68,6 +80,7 @@ class OMSService:
     # ── RiskApprovedEvent → 提交 ──────────────────────────────────────────────
 
     def _on_approved(self, event: RiskApprovedEvent) -> None:
+        """关键 handler：订单提交到交易所，异常不能被吞掉。"""
         order = event.order
 
         # ① 先写缓存（重启安全）
@@ -115,6 +128,7 @@ class OMSService:
     # ── FillEvent → 更新状态 ──────────────────────────────────────────────────
 
     def _on_fill(self, event: FillEvent) -> None:
+        """关键 handler：成交回报更新，异常不能被吞掉。"""
         # 通过 exchange_order_id 反查 order_id
         order_id = self._cache.get(f"exorder:{event.exchange_order_id}")
         if order_id is None:
@@ -130,10 +144,25 @@ class OMSService:
             log.debug("OMS: 忽略终态订单的成交回报 %s", order_id)
             return
 
+        # 幂等性检查：防止超额成交
+        remaining = order.qty - order.filled_qty
+        if remaining <= 0:
+            log.warning("OMS: 订单已无剩余可成交量 %s", order_id[:8])
+            return
+        if event.filled_qty > remaining:
+            log.error("OMS: 成交量 %.4f 超过剩余量 %.4f，丢弃回报 %s",
+                      event.filled_qty, remaining, order_id[:8])
+            return
+
+        event_filled = event.filled_qty
+        if event_filled <= 0:
+            log.warning("OMS: 忽略非正成交量 %.4f %s", event_filled, order_id[:8])
+            return
+
         # 滚动计算成交均价
         prev_cost   = order.filled_qty * order.avg_fill_price
-        new_filled  = order.filled_qty + event.filled_qty
-        new_avg     = (prev_cost + event.filled_qty * event.fill_price) / new_filled
+        new_filled  = order.filled_qty + event_filled
+        new_avg     = (prev_cost + event_filled * event.fill_price) / new_filled
 
         new_status = (
             OrderStatus.FILLED
@@ -159,14 +188,20 @@ class OMSService:
                   order_id[:8], new_filled, order.qty,
                   new_avg, new_status.value)
 
+        # 每次成交都发布 OrderFilledEvent，携带本次增量而非累计量
+        self._bus.publish(
+            OrderFilledEvent(
+                order=updated,
+                avg_price=event.fill_price,
+                fill_qty=event.filled_qty,
+                commission=event.commission,
+            ).caused_by(event)
+        )
+
+        # 完全成交时额外发布日志
         if new_status == OrderStatus.FILLED:
-            self._bus.publish(
-                OrderFilledEvent(
-                    order=updated,
-                    avg_price=new_avg,
-                    commission=event.commission,
-                ).caused_by(event)
-            )
+            log.info("order fully filled  %s  total=%.4f @ avg=%.2f",
+                     order_id[:8], new_filled, new_avg)
 
     # ── 在途订单查询（供 RiskService 使用）────────────────────────────────────
 

@@ -22,6 +22,7 @@ from core.domain.order import Order, OrderStatus, OrderType, Side
 from core.ports.account import AccountPort
 from core.ports.bus import EventBusPort
 from core.ports.cache import CachePort
+from core.ports.oms import OMSPort
 from core.ports.risk import RiskContext
 from application.events import (RiskApprovedEvent, RiskRejectedEvent,
                                  TargetPositionEvent)
@@ -52,7 +53,7 @@ class RiskService:
         pipeline: RiskPipeline,
         account:  AccountPort,
         cache:    CachePort,
-        oms:     object | None = None,  # OMSService（延迟注入，避免循环依赖）
+        oms:     OMSPort | None = None,
     ) -> None:
         self._bus      = bus
         self._pipeline = pipeline
@@ -64,7 +65,7 @@ class RiskService:
         log.info("RiskService 启动，中间件: %s",
                  self._pipeline.middleware_names)
 
-    def set_oms(self, oms: object) -> None:
+    def set_oms(self, oms: OMSPort) -> None:
         """延迟注入 OMS（container 中解决循环依赖）。"""
         self._oms = oms
 
@@ -99,17 +100,20 @@ class RiskService:
             order_qty = abs(delta)
 
         # 判断是否为纯减仓/平仓（reduce_only）
-        # 关键：只有 delta 不跨越零点（纯减仓不含开反向仓）才能设 reduce_only
-        # 例：多头0.8→目标0.3，delta=-0.5，SELL 0.5 全部减多 → reduce_only
-        # 例：多头0.8→目标-0.2，delta=-1.0，SELL 1.0 含平多+开空 → 非 reduce_only
-        # 判断标准：delta 与 current_pos 同号 → 说明同方向减仓，不跨越零点
+        # reduce_only 订单在币安会被标记为"只减仓"，不参与开仓。
+        # 判断逻辑：
+        #   - 当前多头，卖出 → 可能是减仓或开空
+        #   - 当前空头，买入 → 可能是减仓或开多
+        #   只有当订单数量 <= 当前持仓数量时（不跨越零点），才标记为 reduce_only
+        #
+        # 例1：多头0.8，目标0.3 → delta=-0.5，SELL 0.5 ≤ 0.8 → reduce_only=True
+        # 例2：多头0.8，目标-0.2 → delta=-1.0，SELL 1.0 > 0.8 → reduce_only=False（跨越零点）
+        # 例3：空头0.5，目标0.2 → delta=0.7，BUY 0.7 > 0.5 → reduce_only=False（跨越零点）
         is_reducing = False
         if current_pos != 0 and delta != 0:
-            # delta 与 current_pos 同号意味着：调整后仓位更接近0但不翻越0
+            # delta 与 current_pos 异号表示减仓方向
             if (current_pos > 0 and delta < 0) or (current_pos < 0 and delta > 0):
-                # 方向相反：检查是否跨越零点
-                # 跨越零点 = |target| < |current| 且 target 与 current 异号
-                # 简化：如果 delta 的绝对值 > current 的绝对值，说明跨越了零点
+                # 检查是否跨越零点：如果 |delta| <= |current_pos|，则不跨越
                 if abs(delta) <= abs(current_pos):
                     is_reducing = True
 
@@ -167,8 +171,10 @@ class RiskService:
         nav = self._account.get_nav_usdt(account_id)
 
         # 当前持仓（Phase 2：account 存根始终返回 None）
-        pos = self._account.get_position(account_id, symbol)
-        positions = {symbol: pos} if pos else {}
+        pos     = self._account.get_position(account_id, symbol)
+        # 加载所有仓位，风控中间件可据此判断跨标的风险
+        all_pos = self._account.get_all_positions(account_id)
+        positions = {s: p for s, p in all_pos.items() if not p.is_empty}
 
         # ★ 在途订单：从 OMS 获取，替代原来的空列表
         open_orders: list[Order] = []

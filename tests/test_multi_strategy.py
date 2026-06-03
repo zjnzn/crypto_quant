@@ -133,7 +133,7 @@ def build_full_system(btc_perp, strategies, initial_usdt=10_000):
     OMSService(bus=bus, exchange=exchange, cache=cache)
     SettlementService(bus=bus)
     monitor = MonitorService(bus=bus, cache=cache, account=account,
-                             account_id="main",
+                             account_id="main", clock=clock,
                              initial_nav=Decimal(str(initial_usdt)))
 
     feed = CsvFeed(bus=bus, clock=clock, path=None,
@@ -413,7 +413,7 @@ class TestMultiStrategyBacktest:
                     account=account, cache=cache)
         OMSService(bus, exchange, cache)
         SettlementService(bus)
-        monitor = MonitorService(bus, cache, account, "main",
+        monitor = MonitorService(bus, cache, account, "main", SimClock(),
                                  initial_nav=Decimal("10000"))
 
         feed = CsvFeed(bus=bus, clock=clock,
@@ -447,7 +447,7 @@ class TestMultiStrategyBacktest:
                     account=account, cache=cache)
         OMSService(bus, exchange, cache)
         SettlementService(bus)
-        monitor = MonitorService(bus, cache, account, "main",
+        monitor = MonitorService(bus, cache, account, "main", SimClock(),
                                  initial_nav=Decimal("10000"))
 
         pnl_events = []

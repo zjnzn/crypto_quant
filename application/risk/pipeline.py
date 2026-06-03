@@ -49,17 +49,34 @@ class RiskMiddleware:
 
     @staticmethod
     def _resolve_est_price(order: Order, ctx: RiskContext) -> "Decimal | None":
-        """
-        解析订单的预估成交价：优先用 limit_price，否则取 cache 最新价。
-        两者都不可用时返回 None（由调用方决定拒绝还是跳过）。
-        """
         est_price = order.limit_price
         if est_price is not None and est_price > 0:
             return est_price
+
         cache_price = ctx.extra.get("price")
         if cache_price is not None and cache_price > 0:
             return cache_price
+
+        if order.reduce_only:
+            pos = ctx.positions.get(order.instrument.symbol)
+            if pos is not None and pos.entry_price > 0:
+                log.warning(
+                    "风控价格降级：使用持仓入场价 %s (symbol=%s)",
+                    pos.entry_price, order.instrument.symbol,
+                )
+                return pos.entry_price
+
         return None
+
+    @classmethod
+    def _require_est_price(cls, order: Order, ctx: RiskContext, reason: str) -> tuple[Decimal | None, RiskResult | None]:
+        est_price = cls._resolve_est_price(order, ctx)
+        if est_price is not None:
+            return est_price, None
+        if order.reduce_only:
+            log.warning("风控价格缺失但允许通过：reduce_only 订单 (symbol=%s)", order.instrument.symbol)
+            return None, RiskResult.approve()
+        return None, RiskResult.reject(reason)
 
 
 class RiskPipeline:

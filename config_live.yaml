@@ -16,10 +16,10 @@ cache:
 
 execution:
   exchange: binance      # "paper" | "binance" | "okx"
-  api_key:    "LixBa8EOAsAt7yVTaOMAG9hy9aasjE1xcrFwm4nXJj5aDPspIv5MYR6XAv4DZP7f"
-  api_secret: "Uz9LXA82Byf9hhIFpjAs1nJJsWgtJIXgTnmDZHWt7rua4yeQSSNQVK7FzxwCo7Gv"
-  # api_key:    "xAhuEBwlfBN0PmY52XWDxrVisdf14O5voNyPCeJm4qPFUKUynGDlXjWejz4OBl1I"
-  # api_secret: "BpkKYp8lOwimo73LwzbpNHIEFpoJ8XSZKLfGaZPhFy72rNzD427sutBKnkxzax0Q"
+  # api_key:    "LixBa8EOAsAt7yVTaOMAG9hy9aasjE1xcrFwm4nXJj5aDPspIv5MYR6XAv4DZP7f"
+  # api_secret: "Uz9LXA82Byf9hhIFpjAs1nJJsWgtJIXgTnmDZHWt7rua4yeQSSNQVK7FzxwCo7Gv"
+  api_key:    "xAhuEBwlfBN0PmY52XWDxrVisdf14O5voNyPCeJm4qPFUKUynGDlXjWejz4OBl1I"
+  api_secret: "BpkKYp8lOwimo73LwzbpNHIEFpoJ8XSZKLfGaZPhFy72rNzD427sutBKnkxzax0Q"
 
 account:
   main_id: main

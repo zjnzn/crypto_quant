@@ -1,2 +1,6 @@
 *.pyc
 __pycache__/
+.codegraph/
+.pytest_cache/
+.serena/
+.spec-workflow/

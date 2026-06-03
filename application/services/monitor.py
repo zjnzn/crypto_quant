@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from core.ports.account import AccountPort
 from core.ports.bus import EventBusPort
 from core.ports.cache import CachePort
+from core.ports.clock import ClockPort
 from application.events import (AlertEvent, PnLEvent,
                                  PositionUpdatedEvent,
                                  RiskRejectedEvent, TradeEvent)
@@ -46,6 +47,7 @@ class MonitorService:
         cache:       CachePort,
         account:     AccountPort,
         account_id:  str,
+        clock:       ClockPort,
         initial_nav: Decimal,
         warn_dd:     float = 0.03,
         critical_dd: float = 0.05,
@@ -54,6 +56,7 @@ class MonitorService:
         self._cache          = cache
         self._account        = account
         self._account_id     = account_id
+        self._clock          = clock
         self._initial_nav    = initial_nav
         self._warn_dd        = Decimal(str(warn_dd))
         self._critical_dd    = Decimal(str(critical_dd))
@@ -187,11 +190,7 @@ class MonitorService:
             self._last_alert_dd = Decimal(0)
 
     def _clock_date(self) -> date:
-        try:
-            ts = self._cache.get(f"last_ts:{self._account_id}")
-            return ts.date() if ts else date.today()
-        except Exception:
-            return date.today()
+        return self._clock.now().date()
 
     # ── 公开属性（只读）──────────────────────────────────────────────────────
 

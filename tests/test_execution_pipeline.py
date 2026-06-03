@@ -80,12 +80,14 @@ def full_stack(infra, btc_perp):
     bus, cache = infra
     initial_usdt = Decimal("10_000")
 
+    clock     = SimClock()
     account  = AccountService(bus=bus, cache=cache, initial_usdt=initial_usdt)
     exchange = PaperExchange(bus=bus, cache=cache, initial_usdt=initial_usdt)
     oms      = OMSService(bus=bus, exchange=exchange, cache=cache)
     SettlementService(bus=bus)
     monitor  = MonitorService(bus=bus, cache=cache, account=account,
-                               account_id="main", initial_nav=initial_usdt)
+                               account_id="main", clock=clock,
+                               initial_nav=initial_usdt)
 
     # 预先设置市价（Paper Exchange 需要）
     cache.set(f"price:{btc_perp.symbol}", Decimal("65000"))
@@ -336,6 +338,7 @@ class TestMonitorService:
         SettlementService(bus=bus)
         monitor = MonitorService(
             bus=bus, cache=cache, account=account, account_id="main",
+            clock=SimClock(),
             initial_nav=initial_usdt, warn_dd=0.01, critical_dd=0.02,
         )
         alerts = []

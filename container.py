@@ -177,6 +177,7 @@ def build(cfg: Config) -> System:
         cache       = cache,
         account     = account_svc,
         account_id  = account_id,
+        clock       = env.clock,
         initial_nav = initial_usdt,
         warn_dd     = cfg.monitor.warn_drawdown,
         critical_dd = cfg.monitor.critical_drawdown,

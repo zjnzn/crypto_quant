@@ -46,12 +46,14 @@ class PositionLimitMiddleware(RiskMiddleware):
         new_size = cur_size + pending_delta + delta
 
         # ★ market order 无 limit_price，从 limit_price 或 cache 解析预估价
-        est_price = self._resolve_est_price(order, ctx)
-        if est_price is None:
-            # 无法获取价格，拒绝订单（保守策略）
-            return RiskResult.reject(
-                f"{order.instrument.symbol} 无法估算价格，拒绝 market order"
-            )
+        est_price, failure = self._require_est_price(
+            order,
+            ctx,
+            f"{order.instrument.symbol} 无法估算价格，拒绝 market order。"
+            f"建议：使用限价单或检查价格数据源。",
+        )
+        if failure is not None:
+            return call_next(order, ctx) if failure.passed else failure
         if ctx.nav_usdt > 0:
             weight = abs(new_size * est_price) / ctx.nav_usdt
             # 小账户容差：当 NAV 不足以开交易所最小仓位时，允许适度超限
@@ -82,14 +84,45 @@ class MaxLeverageMiddleware(RiskMiddleware):
 
     def _do_check(self, order: Order, ctx: RiskContext,
                   call_next: Next) -> RiskResult:
-        cur = ctx.positions.get(order.instrument.symbol)
-        leverage = cur.leverage if cur else 1
-        allowed  = min(order.instrument.max_leverage, self._max)
+        est_price, failure = self._require_est_price(
+            order,
+            ctx,
+            f"{order.instrument.symbol} 无法估算价格，拒绝杠杆检查。"
+            f"建议：使用限价单或检查价格数据源。",
+        )
+        if failure is not None:
+            return call_next(order, ctx) if failure.passed else failure
 
-        if leverage > allowed:
+        # 计算当前持仓总名义价值 + 在途增量
+        pending_delta = ctx.extra.get("pending_delta", Decimal(0))
+        existing_notional = Decimal(0)
+        for pos in ctx.positions.values():
+            mark = ctx.extra.get("price") or pos.entry_price
+            existing_notional += pos.size * mark
+        # 加上在途订单的名义价值
+        existing_notional += abs(pending_delta) * est_price
+
+        # 新订单的名义价值
+        new_notional = order.qty * est_price
+        # 新订单是减仓方向时不增加杠杆
+        cur = ctx.positions.get(order.instrument.symbol)
+        is_reducing = (cur and cur.side == PositionSide.LONG and order.side == Side.SELL) or \
+                      (cur and cur.side == PositionSide.SHORT and order.side == Side.BUY)
+        if is_reducing:
+            projected_notional = max(Decimal(0), existing_notional - new_notional)
+        else:
+            projected_notional = existing_notional + new_notional
+
+        # 预期杠杆 = 总名义价值 / NAV
+        if ctx.nav_usdt <= 0:
+            return RiskResult.reject("账户净值为零或负值")
+
+        projected_leverage = projected_notional / ctx.nav_usdt
+        allowed = min(order.instrument.max_leverage, self._max)
+
+        if projected_leverage > Decimal(allowed):
             return RiskResult.reject(
-                f"{order.instrument.symbol} 杠杆 {leverage}x "
-                f"超过上限 {allowed}x"
+                f"预期杠杆 {projected_leverage:.1f}x 超过上限 {allowed}x"
             )
         return call_next(order, ctx)
 
@@ -158,11 +191,11 @@ class MinNotionalMiddleware(RiskMiddleware):
 
     def _do_check(self, order: Order, ctx: RiskContext,
                   call_next: Next) -> RiskResult:
-        # ★ market order 无 limit_price，从 limit_price 或 cache 解析预估价
         est_price = self._resolve_est_price(order, ctx)
         if est_price is None:
-            # 无法获取价格，跳过最小名义价值检查（不阻塞交易）
-            return call_next(order, ctx)
+            return RiskResult.reject(
+                f"{order.instrument.symbol} 无法估算价格，拒绝最小名义价值检查"
+            )
         notional  = order.qty * est_price
         min_n     = order.instrument.min_notional
 

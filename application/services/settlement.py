@@ -32,18 +32,18 @@ class SettlementService:
         log.info("SettlementService 启动（T+0 模式）")
 
     def _on_filled(self, event: OrderFilledEvent) -> None:
+        """每次部分/全部成交都结算，使用增量 fill_qty。"""
         order = event.order
         self._bus.publish(
             SettlementEvent(
                 account_id   = order.account_id,
                 instrument   = order.instrument,
-                settled_qty  = order.filled_qty,
+                settled_qty  = event.fill_qty,      # 增量而非累计
                 side         = order.side,
-                avg_price    = event.avg_price,
-                net_pnl      = Decimal(0),   # AccountService 根据 entry_price 计算
+                avg_price    = event.avg_price,     # 本次成交价
                 commission   = event.commission,
             ).caused_by(event)
         )
         log.debug("settlement  %s  %s  qty=%.4f @ %.2f",
                   order.side.value, order.instrument.symbol,
-                  order.filled_qty, event.avg_price)
+                  event.fill_qty, event.avg_price)
