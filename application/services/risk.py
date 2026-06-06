@@ -95,8 +95,18 @@ class RiskService:
         order_side = Side.BUY if is_buy else Side.SELL
         order_qty = instrument.round_qty(abs(delta))
 
-        # 单向持仓模式不需要 reduceOnly
-        reduce_only = False
+        # 单向持仓模式下，减仓操作必须设 reduceOnly=true
+        # 判断逻辑：delta 方向与持仓方向相反 → 减仓
+        # 例：多头(delta<0→SELL减仓) 或 空头(delta>0→BUY减仓)
+        if event.current_size != 0:
+            # 有持仓时，delta 方向与持仓相反 → 纯减仓
+            # 多头持仓(current>0) + SELL(delta<0) → reduceOnly
+            # 空头持仓(current<0) + BUY(delta>0) → reduceOnly
+            is_reducing = (event.current_size > 0 and not is_buy) or \
+                          (event.current_size < 0 and is_buy)
+            reduce_only = is_reducing
+        else:
+            reduce_only = False
 
         order = Order(
             instrument  = instrument,
@@ -150,7 +160,7 @@ class RiskService:
         side:        Side,
         qty:         Decimal,
     ) -> None:
-        """发布平仓订单（翻仓第一步）。"""
+        """发布平仓订单（翻仓第一步），reduceOnly=true。"""
         price: Decimal | None = self._cache.get(f"price:{instrument.symbol}")
         order = Order(
             instrument  = instrument,
@@ -160,7 +170,7 @@ class RiskService:
             order_type  = OrderType.MARKET,
             strategy_id = "",
             limit_price = price,
-            reduce_only = False,
+            reduce_only = True,
         )
 
         ctx = self._build_context(event.account_id, instrument.symbol)
