@@ -27,8 +27,8 @@ account:
 
 risk:
   max_weight:       0.10    # 单标的保证金占用上限（名义价值 = max_weight × leverage）
-  max_leverage:     5       # 全局最大杠杆（实盘建议保守）
-  leverage:         5       # 目标杠杆倍数（用于仓位计算）
+  max_leverage:     20       # 全局最大杠杆（实盘建议保守）
+  leverage:         20       # 目标杠杆倍数（用于仓位计算）
   max_drawdown:     0.05    # 5% 回撤熔断
   max_funding_rate: 0.003   # 0.3%/8h 资金费率上限
   order_cooldown:   5.0     # 同标的两次下单最小间隔（秒，防止重复下单）
@@ -41,7 +41,7 @@ strategies:
   - module: "strategies.momentum.MomentumStrategy"
     params:
       window:    20
-      scale:     0.005
+      scale:     0.0025
       min_score: 0.20     # 实盘信号阈值适当提高
 
   # - module: "strategies.mean_reversion.MeanReversionStrategy"
