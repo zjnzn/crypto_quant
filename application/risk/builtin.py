@@ -23,9 +23,12 @@ log = logging.getLogger(__name__)
 
 class PositionLimitMiddleware(RiskMiddleware):
     """
-    单标的仓位权重不超过账户净值的 max_weight。
+    单标的保证金占用不超过账户净值的 max_weight。
 
-    weight = |new_size * price| / nav_usdt
+    保证金占用 = 名义价值 / 杠杆 = |new_size * price| / leverage
+    weight = 保证金占用 / nav_usdt
+
+    若 max_weight=10%，leverage=5x，则名义价值可达 50% NAV。
     """
     name = "position_limit"
 
@@ -45,11 +48,18 @@ class PositionLimitMiddleware(RiskMiddleware):
         # 用 limit_price 估算，无 limit_price 用 0（market order，偏保守）
         est_price = order.limit_price or Decimal(1)
         if ctx.nav_usdt > 0:
-            weight = abs(new_size * est_price) / ctx.nav_usdt
+            # 获取杠杆倍数（从当前仓位或默认 1）
+            leverage = cur.leverage if cur and cur.leverage > 0 else 1
+
+            # 保证金占用 = 名义价值 / 杠杆
+            notional = abs(new_size * est_price)
+            margin_used = notional / leverage
+            weight = margin_used / ctx.nav_usdt
+
             if weight > self._max:
                 return RiskResult.reject(
-                    f"{order.instrument.symbol} 权重 {weight:.1%} "
-                    f"超过上限 {self._max:.1%}"
+                    f"{order.instrument.symbol} 保证金占用 {weight:.1%} "
+                    f"超过上限 {self._max:.1%}（杠杆 {leverage}x）"
                 )
         return call_next(order, ctx)
 

@@ -156,6 +156,7 @@ def build(cfg: Config) -> System:
         account_id = account_id,
         max_weight = cfg.risk.max_weight,
         min_score  = 0.15,
+        leverage   = cfg.risk.leverage,
     )
     RiskService(
         bus      = bus,

@@ -34,8 +34,9 @@ class ExecutionConfig:
 
 @dataclass
 class RiskConfig:
-    max_weight:       float = 0.10
-    max_leverage:     int   = 10
+    max_weight:       float = 0.10    # 单标的保证金占用上限
+    max_leverage:     int   = 10      # 全局最大杠杆
+    leverage:         int   = 1       # 目标杠杆倍数（用于仓位计算）
     max_drawdown:     float = 0.05
     max_funding_rate: float = 0.003
     warn_drawdown:    float = 0.03

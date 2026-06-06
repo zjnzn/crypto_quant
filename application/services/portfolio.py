@@ -36,10 +36,11 @@ class PortfolioService:
         cache:          CachePort,
         account:        AccountPort,
         account_id:     str,
-        max_weight:     float = 0.10,
+        max_weight:     float = 0.10,    # 单标的保证金占用上限
         min_score:      float = 0.15,
         allow_short:    bool  = True,
-        order_cooldown: float = 0.0,   # 两次同标的下单最小间隔（秒）
+        order_cooldown: float = 0.0,     # 两次同标的下单最小间隔（秒）
+        leverage:       int   = 1,       # 目标杠杆倍数
     ) -> None:
         self._bus        = bus
         self._cache      = cache
@@ -49,6 +50,7 @@ class PortfolioService:
         self._min_score      = min_score
         self._allow_short    = allow_short
         self._order_cooldown = order_cooldown
+        self._leverage       = leverage
 
         # (symbol, strategy_id) → SignalEvent
         self._signals: dict[tuple[str, str], SignalEvent] = {}
@@ -56,8 +58,9 @@ class PortfolioService:
         self._last_order_ts: dict[str, float] = {}
 
         bus.subscribe(SignalEvent, self._on_signal)
-        log.info("PortfolioService 启动  max_weight=%.0f%%  min_score=%.2f  short=%s",
-                 max_weight * 100, min_score, allow_short)
+        log.info("PortfolioService 启动  max_weight=%.0f%%  min_score=%.2f  "
+                 "short=%s  leverage=%dx",
+                 max_weight * 100, min_score, allow_short, leverage)
 
     def _on_signal(self, event: SignalEvent) -> None:
         sym = event.instrument.symbol
@@ -90,6 +93,8 @@ class PortfolioService:
         )
 
         # ── 目标仓位计算 ──────────────────────────────────────────────────────
+        # 公式：target_size = score × max_weight × leverage × NAV / price
+        # max_weight 是保证金占用比例，leverage 放大后得到名义价值
         nav = self._account.get_nav_usdt(self._account_id)
         if nav <= 0:
             return
@@ -100,8 +105,13 @@ class PortfolioService:
             target_size = Decimal(0)
             target_side = Side.BUY
         else:
+            # 保证金占用 = max_weight × NAV
+            # 名义价值 = 保证金 × leverage
+            # 仓位数量 = 名义价值 / price = max_weight × leverage × NAV / price
             target_size = (Decimal(str(abs_score))
-                           * self._max_weight * nav / price)
+                           * self._max_weight
+                           * self._leverage
+                           * nav / price)
             target_size = event.instrument.round_qty(target_size)
             target_side = Side.BUY if combined_score > 0 else Side.SELL
 
