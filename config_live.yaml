@@ -41,7 +41,7 @@ strategies:
   - module: "strategies.momentum.MomentumStrategy"
     params:
       window:    20
-      scale:     0.05
+      scale:     0.005
       min_score: 0.20     # 实盘信号阈值适当提高
 
   # - module: "strategies.mean_reversion.MeanReversionStrategy"
