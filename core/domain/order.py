@@ -24,10 +24,14 @@ class Side(Enum):
 
 
 class OrderType(Enum):
-    MARKET      = "market"
-    LIMIT       = "limit"
-    STOP_MARKET = "stop_market"
-    STOP_LIMIT  = "stop_limit"
+    MARKET              = "market"
+    LIMIT               = "limit"
+    STOP                = "stop"
+    STOP_MARKET         = "stop_market"
+    STOP_LIMIT          = "stop_limit"
+    TAKE_PROFIT         = "take_profit"
+    TAKE_PROFIT_MARKET  = "take_profit_market"
+    TRAILING_STOP_MARKET = "trailing_stop_market"
 
 
 class OrderStatus(Enum):
@@ -53,6 +57,7 @@ class TimeInForce(Enum):
     IOC = "ioc"   # Immediate or Cancel
     FOK = "fok"   # Fill or Kill
     GTX = "gtx"   # Post-only（只挂 maker 单）
+    GTD = "gtd"   # Good Till Date（指定时间自动撤单）
 
 
 @dataclass(frozen=True)
@@ -90,6 +95,9 @@ class Order:
     stop_price:        Decimal|None = None
     tif:               TimeInForce  = TimeInForce.GTC
     reduce_only:       bool         = False
+    callback_rate:     Decimal|None = None      # 追踪止损回调比率（%）
+    activation_price:  Decimal|None = None      # 追踪止损激活价格
+    good_till_date:    int|None     = None      # GTD 自动撤单时间戳 (ms)
 
     # ── 成交后填充（不应在构造时传入）──────────────────────────────────
     status:            OrderStatus  = OrderStatus.NEW
