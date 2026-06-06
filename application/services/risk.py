@@ -18,6 +18,7 @@ import logging
 from decimal import Decimal
 from uuid import uuid4
 
+from core.domain.instrument import Instrument
 from core.domain.order import Order, OrderStatus, OrderType, Side
 from core.ports.account import AccountPort
 from core.ports.bus import EventBusPort
@@ -69,16 +70,32 @@ class RiskService:
         if abs(delta) < instrument.lot_size:
             return   # delta 太小，忽略
 
-        # ── 2. 构建订单 ───────────────────────────────────────────────────────
+        # ── 2. 翻仓检测 ────────────────────────────────────────────────────────
+        # 翻仓：current_size 和 target_size 符号相反
+        # 例如 current=-0.45 (空头), target=0.20 (多头) → delta=0.65
+        # 翻仓时 delta = |平仓量| + |开仓量|，需要保证金远超账户余额
+        # 解决：分两步下单，先平仓释放保证金，再开新仓
+        is_reversal = (event.current_size > 0 and event.target_size < 0) or \
+                      (event.current_size < 0 and event.target_size > 0)
+
+        if is_reversal:
+            # 第一步：平掉当前仓位
+            close_qty = instrument.round_qty(abs(event.current_size))
+            close_side = Side.SELL if event.current_size > 0 else Side.BUY
+            self._publish_close_order(event, instrument, close_side, close_qty)
+            # 第二步：开新仓位（将在下一个信号周期自然触发）
+            # 因为平仓后 current_size ≈ 0，下次信号计算 delta = target_size
+            log.info("翻仓分步: %s 先平仓 %s %.6f，新仓将在下次信号触发",
+                     sym, close_side.value, close_qty)
+            return
+
+        # ── 3. 构建订单 ───────────────────────────────────────────────────────
         price: Decimal | None = self._cache.get(f"price:{sym}")
         is_buy = delta > 0
         order_side = Side.BUY if is_buy else Side.SELL
         order_qty = instrument.round_qty(abs(delta))
 
-        # reduce_only 逻辑：
-        # 单向持仓模式（Binance 默认）：不需要 reduceOnly，交易所自动识别
-        # 双向持仓模式（hedge_mode=True）：需要 reduceOnly + positionSide
-        # 当前系统使用单向持仓模式，因此不设 reduceOnly
+        # 单向持仓模式不需要 reduceOnly
         reduce_only = False
 
         order = Order(
@@ -125,6 +142,51 @@ class RiskService:
                         sym, result.level, result.reason)
 
     # ── 内部辅助 ──────────────────────────────────────────────────────────────
+
+    def _publish_close_order(
+        self,
+        event:      TargetPositionEvent,
+        instrument:  Instrument,
+        side:        Side,
+        qty:         Decimal,
+    ) -> None:
+        """发布平仓订单（翻仓第一步）。"""
+        price: Decimal | None = self._cache.get(f"price:{instrument.symbol}")
+        order = Order(
+            instrument  = instrument,
+            account_id  = event.account_id,
+            side        = side,
+            qty         = qty,
+            order_type  = OrderType.MARKET,
+            strategy_id = "",
+            limit_price = price,
+            reduce_only = False,
+        )
+
+        ctx = self._build_context(event.account_id, instrument.symbol)
+        result = self._pipeline.check(order, ctx)
+
+        if result.passed:
+            final_order = result.amended_order or order
+            self._bus.publish(
+                RiskApprovedEvent(
+                    account_id=event.account_id,
+                    order=final_order,
+                ).caused_by(event)
+            )
+            log.debug("risk ✓ (close)  %s  qty=%.6f  side=%s",
+                      instrument.symbol, final_order.qty, final_order.side.value)
+        else:
+            self._bus.publish(
+                RiskRejectedEvent(
+                    account_id=event.account_id,
+                    order=order,
+                    reason=result.reason,
+                    level=result.level,
+                ).caused_by(event)
+            )
+            log.warning("risk ✗ (close)  %s  [%s] %s",
+                        instrument.symbol, result.level, result.reason)
 
     def _build_context(self, account_id: str, symbol: str) -> RiskContext:
         """从 cache + account 组装风控上下文。"""
