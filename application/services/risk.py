@@ -20,9 +20,11 @@ from uuid import uuid4
 
 from core.domain.instrument import Instrument
 from core.domain.order import Order, OrderStatus, OrderType, Side
+from core.domain.position import PositionSide
 from core.ports.account import AccountPort
 from core.ports.bus import EventBusPort
 from core.ports.cache import CachePort
+from core.ports.execution import ExecutionPort
 from core.ports.risk import RiskContext
 from application.events import (RiskApprovedEvent, RiskRejectedEvent,
                                  TargetPositionEvent)
@@ -44,15 +46,17 @@ class RiskService:
 
     def __init__(
         self,
-        bus:      EventBusPort,
-        pipeline: RiskPipeline,
-        account:  AccountPort,
-        cache:    CachePort,
+        bus:       EventBusPort,
+        pipeline:  RiskPipeline,
+        account:   AccountPort,
+        cache:     CachePort,
+        exchange:  ExecutionPort | None = None,
     ) -> None:
         self._bus      = bus
         self._pipeline = pipeline
         self._account  = account
         self._cache    = cache
+        self._exchange = exchange
 
         bus.subscribe(TargetPositionEvent, self._on_target)
         log.info("RiskService 启动，中间件: %s",
@@ -62,26 +66,47 @@ class RiskService:
         instrument = event.instrument
         sym        = instrument.symbol
 
+        # ── 0. 从交易所获取真实仓位（覆盖系统内部状态）─────────────────────────
+        # 系统内部 current_size 可能与交易所不一致（订单失败、重启丢失状态等）
+        # 用交易所真实仓位计算 delta，确保下单决策正确
+        real_current_size = event.current_size  # 默认使用系统内部值
+
+        if self._exchange:
+            try:
+                real_pos = self._exchange.get_position(instrument, event.account_id)
+                if real_pos and not real_pos.is_empty:
+                    # 转换为带符号 size：正=多头，负=空头
+                    real_current_size = (real_pos.size if real_pos.side == PositionSide.LONG
+                                         else -real_pos.size)
+                    log.debug("risk 真实仓位: %s size=%.6f (系统内部=%.6f)",
+                              sym, real_current_size, event.current_size)
+                else:
+                    real_current_size = Decimal(0)
+                    log.debug("risk 真实仓位: %s 无持仓 (系统内部=%.6f)",
+                              sym, event.current_size)
+            except Exception as e:
+                log.warning("risk 获取真实仓位失败 %s: %s，使用系统内部值", sym, e)
+
         # ── 1. 计算下单 delta ─────────────────────────────────────────────────
         # target_size 和 current_size 均带符号：正=多头，负=空头
         # delta > 0 → 需要买入（增多头/减空头）
         # delta < 0 → 需要卖出（减多头/增空头）
-        delta = event.target_size - event.current_size
+        delta = event.target_size - real_current_size
         if abs(delta) < instrument.lot_size:
             return   # delta 太小，忽略
 
         # ── 2. 翻仓检测 ────────────────────────────────────────────────────────
-        # 翻仓：current_size 和 target_size 符号相反
+        # 翻仓：real_current_size 和 target_size 符号相反
         # 例如 current=-0.45 (空头), target=0.20 (多头) → delta=0.65
         # 翻仓时 delta = |平仓量| + |开仓量|，需要保证金远超账户余额
         # 解决：分两步下单，先平仓释放保证金，再开新仓
-        is_reversal = (event.current_size > 0 and event.target_size < 0) or \
-                      (event.current_size < 0 and event.target_size > 0)
+        is_reversal = (real_current_size > 0 and event.target_size < 0) or \
+                      (real_current_size < 0 and event.target_size > 0)
 
         if is_reversal:
             # 第一步：平掉当前仓位
-            close_qty = instrument.round_qty(abs(event.current_size))
-            close_side = Side.SELL if event.current_size > 0 else Side.BUY
+            close_qty = instrument.round_qty(abs(real_current_size))
+            close_side = Side.SELL if real_current_size > 0 else Side.BUY
             self._publish_close_order(event, instrument, close_side, close_qty)
             # 第二步：开新仓位（将在下一个信号周期自然触发）
             # 因为平仓后 current_size ≈ 0，下次信号计算 delta = target_size
@@ -98,12 +123,12 @@ class RiskService:
         # 单向持仓模式下，减仓操作必须设 reduceOnly=true
         # 判断逻辑：delta 方向与持仓方向相反 → 减仓
         # 例：多头(delta<0→SELL减仓) 或 空头(delta>0→BUY减仓)
-        if event.current_size != 0:
+        if real_current_size != 0:
             # 有持仓时，delta 方向与持仓相反 → 纯减仓
             # 多头持仓(current>0) + SELL(delta<0) → reduceOnly
             # 空头持仓(current<0) + BUY(delta>0) → reduceOnly
-            is_reducing = (event.current_size > 0 and not is_buy) or \
-                          (event.current_size < 0 and is_buy)
+            is_reducing = (real_current_size > 0 and not is_buy) or \
+                          (real_current_size < 0 and is_buy)
             reduce_only = is_reducing
         else:
             reduce_only = False

@@ -160,10 +160,11 @@ def build(cfg: Config) -> System:
         order_cooldown = cfg.risk.order_cooldown,
     )
     RiskService(
-        bus      = bus,
-        pipeline = risk_pipeline,
-        account  = account_svc,
-        cache    = cache,
+        bus       = bus,
+        pipeline  = risk_pipeline,
+        account   = account_svc,
+        cache     = cache,
+        exchange  = exchange,
     )
     OMSService(
         bus      = bus,
