@@ -43,14 +43,14 @@ strategies:
       scale:     0.05
       min_score: 0.20     # 实盘信号阈值适当提高
 
-  - module: "strategies.mean_reversion.MeanReversionStrategy"
-    params:
-      window:      20
-      z_entry:     2.0    # 实盘 Z-score 阈值更保守
-      z_threshold: 3.0
+  # - module: "strategies.mean_reversion.MeanReversionStrategy"
+  #   params:
+  #     window:      20
+  #     z_entry:     2.0    # 实盘 Z-score 阈值更保守
+  #     z_threshold: 3.0
 
-  - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
-    params:
-      min_rate:      0.001
-      max_rate:      0.005
-      cooldown_bars: 8
+  # - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
+  #   params:
+  #     min_rate:      0.001
+  #     max_rate:      0.005
+  #     cooldown_bars: 8
