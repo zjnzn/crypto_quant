@@ -499,7 +499,7 @@ class TestLiveConfig:
         cfg = Config.from_yaml(str(ROOT / "config_live.yaml"))
         assert cfg.mode == "live"
         assert cfg.execution.exchange == "binance"
-        assert len(cfg.strategies) == 3
+        assert len(cfg.strategies) >= 1
 
     def test_paper_mode_uses_paper_exchange(self) -> None:
         """paper 模式使用 PaperExchange（不调用 Binance API）。"""

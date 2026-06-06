@@ -75,16 +75,25 @@ class RiskService:
         is_reducing  = delta < 0
         order_side   = Side.SELL if is_reducing else Side.BUY
 
-        # 减仓时，将数量限制在已知持仓范围内，
-        # 防止因缺少 FillEvent 回调导致仓位记录滞后时超量下单（-2022）。
         order_qty = instrument.round_qty(abs(delta))
+
+        # reduce_only 逻辑：
+        # - 单向持仓模式（BOTH）：SELL 平多仓 / BUY 平空仓，不需要 reduceOnly
+        # - 仅在"减仓但不超过当前持仓"时设置 reduceOnly，
+        #   防止 FillEvent 滞后导致超量下单
+        reduce_only = False
         if is_reducing:
             cur_pos  = self._account.get_position(
                 event.account_id, instrument.symbol)
             cur_size = cur_pos.size if cur_pos else Decimal(0)
+            # 如果减仓量 >= 当前持仓，说明是翻仓（平多+开空），不设 reduceOnly
+            # 如果减仓量 < 当前持仓，说明是部分减仓，设 reduceOnly 防超量
+            if order_qty <= cur_size:
+                reduce_only = True
+            # 限制数量不超过当前持仓（安全兜底）
             order_qty = instrument.round_qty(min(order_qty, cur_size))
             if order_qty < instrument.lot_size:
-                log.debug("reduce_only qty capped to 0, skip: %s", instrument.symbol)
+                log.debug("reduce qty capped to 0, skip: %s", instrument.symbol)
                 return
 
         order = Order(
