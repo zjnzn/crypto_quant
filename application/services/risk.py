@@ -76,33 +76,10 @@ class RiskService:
         order_qty = instrument.round_qty(abs(delta))
 
         # reduce_only 逻辑：
-        # 只有在"减少仓位但不开反向仓"时设 reduceOnly。
-        # 具体来说：
-        #   - 多头减仓到更小多头（delta<0, target>0）: reduce_only=True
-        #   - 多头全平（delta<0, target=0）: reduce_only=True
-        #   - 多头翻空（delta<0, target<0）: reduce_only=False（先平后开）
-        #   - 空头减仓到更小空头（delta>0, target<0）: reduce_only=True
-        #   - 空头全平（delta>0, target=0）: reduce_only=True
-        #   - 空头翻多（delta>0, target>0）: reduce_only=False（先平后开）
+        # 单向持仓模式（Binance 默认）：不需要 reduceOnly，交易所自动识别
+        # 双向持仓模式（hedge_mode=True）：需要 reduceOnly + positionSide
+        # 当前系统使用单向持仓模式，因此不设 reduceOnly
         reduce_only = False
-        if is_buy:
-            # 买入减少空头仓位时检查 reduceOnly
-            if event.current_size < 0:  # 当前有空头仓位
-                reduce_qty = min(order_qty, abs(event.current_size))
-                if event.target_size <= 0:  # 目标仍为空头或平仓，不是翻仓
-                    reduce_only = True
-                order_qty = instrument.round_qty(reduce_qty)
-        else:
-            # 卖出减少多头仓位时检查 reduceOnly
-            if event.current_size > 0:  # 当前有多头仓位
-                reduce_qty = min(order_qty, event.current_size)
-                if event.target_size >= 0:  # 目标仍为多头或平仓，不是翻仓
-                    reduce_only = True
-                order_qty = instrument.round_qty(reduce_qty)
-
-        if order_qty < instrument.lot_size:
-            log.debug("reduce qty capped to 0, skip: %s", instrument.symbol)
-            return
 
         order = Order(
             instrument  = instrument,
