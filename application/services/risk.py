@@ -104,7 +104,7 @@ class RiskService:
             order_type  = OrderType.MARKET,
             strategy_id = "",
             limit_price = price,
-            reduce_only = is_reducing,
+            reduce_only = reduce_only,
         )
 
         # ── 3. 组装 RiskContext ───────────────────────────────────────────────
