@@ -97,8 +97,10 @@ class PortfolioService:
         # 状态机逻辑：
         # - 无持仓：信号 < min_score → 不开仓，信号 ≥ min_score → 正常计算
         # - 有持仓：信号在 [0, min_score] → 保持最低持仓（按 min_score 算）
-        nav = self._account.get_nav_usdt(self._account_id)
-        if nav <= 0:
+        # 用 equity（余额+未实现盈亏）而非 NAV（余额+持仓市值）
+        # 避免仓位随持仓增大而失控
+        equity = self._account.get_equity_usdt(self._account_id)
+        if equity <= 0:
             return
 
         abs_score = abs(combined_score)
@@ -138,7 +140,7 @@ class PortfolioService:
         raw_size = (Decimal(str(abs_score))
                     * self._max_weight
                     * self._leverage
-                    * nav / price)
+                    * equity / price)
         raw_size = event.instrument.round_qty(raw_size)
 
         # 带符号：score > 0 → 正（多头），score < 0 → 负（空头），score = 0 保持原方向

@@ -64,6 +64,32 @@ class AccountService:
             mark = self._cache.get(f"price:{sym}") or pos.entry_price
             nav += pos.size * mark   # ← 持仓市值，不是浮盈差值
         return nav
+
+    def get_equity_usdt(self, account_id: str) -> Decimal:
+        """
+        Equity = USDT 余额 + 未实现盈亏。
+
+        与 NAV 的区别：
+          NAV  = 余额 + 持仓市值（size × mark_price） → 含全额成本基础
+          Equity = 余额 + 未实现盈亏（浮盈浮亏） → 只含增量
+
+        仓位计算应使用 equity，而非 NAV：
+          用 NAV 计算 → 仓位随持仓增大失控（越滚越大）
+          用 Equity 计算 → 仓位基于实际可用保证金，稳定可控
+
+        示例：以 65000 买入 0.01 BTC（5x杠杆）
+          USDT 减少：0.01 * 65000 / 5 + commission ≈ 130.65
+          未实现盈亏：0.01 * (mark_price - 65000) ≈ 0
+          Equity ≈ 10000 - 130.65 ≈ 9869.35
+        """
+        equity = self._usdt[account_id]
+        for (acc_id, sym), pos in self._positions.items():
+            if acc_id != account_id or pos.is_empty:
+                continue
+            unrealized = pos.calc_unrealized_pnl(
+                self._cache.get(f"price:{sym}") or pos.entry_price)
+            equity += unrealized
+        return equity
     def net_orders(self, account_id: str, orders: list[Order]) -> list[Order]:
         """同标的多策略订单轧差。"""
         net:  dict[str, Decimal] = defaultdict(Decimal)

@@ -107,14 +107,14 @@ def test_has_position_below_threshold_reduces_to_min(btc_perp):
     ))
     
     # 有持仓 → 保持最低持仓
-    # min_position = 0.15 × 0.10 × 5 × NAV / price
-    # NAV = 13000（见上文）
-    # min_position = 0.15 × 0.10 × 5 × 13000 / 60000 = 0.01625 BTC
+    # equity = USDT余额 + 未实现盈亏 = 10000 + 0 = 10000
+    # （手动设置持仓不影响 USDT 余额，mark_price=entry_price → 未实现盈亏=0）
+    # min_position = 0.15 × 0.10 × 5 × equity / price
+    # min_position = 0.15 × 0.10 × 5 × 10000 / 60000 = 0.0125 BTC
     assert len(targets) > 0
     assert targets[0].target_size > 0, "应保持多头持仓"
     assert targets[0].target_size < Decimal("0.05"), "应减仓"
-    # 验证接近最低持仓（允许误差）
-    expected_min = Decimal("0.15") * Decimal("0.10") * 5 * Decimal("13000") / Decimal("60000")
+    expected_min = Decimal("0.15") * Decimal("0.10") * 5 * Decimal("10000") / Decimal("60000")
     assert abs(targets[0].target_size - expected_min) < Decimal("0.002")
 
 

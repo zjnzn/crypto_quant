@@ -23,6 +23,10 @@ class AccountPort(Protocol):
         """获取账号净值（USDT 计）。"""
         ...
 
+    def get_equity_usdt(self, account_id: str) -> Decimal:
+        """获取账号权益 = 余额 + 未实现盈亏（USDT 计）。"""
+        ...
+
     def net_orders(self, account_id: str,
                    orders: list[Order]) -> list[Order]:
         """
