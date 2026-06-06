@@ -40,6 +40,7 @@ class RiskConfig:
     max_drawdown:     float = 0.05
     max_funding_rate: float = 0.003
     warn_drawdown:    float = 0.03
+    order_cooldown:   float = 0.0     # 同标的两次下单最小间隔（秒，实盘建议5s）
 
 
 @dataclass

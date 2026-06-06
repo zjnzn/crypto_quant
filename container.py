@@ -150,13 +150,14 @@ def build(cfg: Config) -> System:
         make_ctx   = make_ctx,
     )
     PortfolioService(
-        bus        = bus,
-        cache      = cache,
-        account    = account_svc,
-        account_id = account_id,
-        max_weight = cfg.risk.max_weight,
-        min_score  = 0.15,
-        leverage   = cfg.risk.leverage,
+        bus            = bus,
+        cache          = cache,
+        account        = account_svc,
+        account_id     = account_id,
+        max_weight     = cfg.risk.max_weight,
+        min_score      = 0.15,
+        leverage       = cfg.risk.leverage,
+        order_cooldown = cfg.risk.order_cooldown,
     )
     RiskService(
         bus      = bus,

@@ -21,6 +21,7 @@ import logging
 from decimal import Decimal
 
 from core.domain.order import Side
+from core.domain.position import PositionSide
 from core.ports.account import AccountPort
 from core.ports.bus import EventBusPort
 from core.ports.cache import CachePort
@@ -93,38 +94,67 @@ class PortfolioService:
         )
 
         # ── 目标仓位计算 ──────────────────────────────────────────────────────
-        # 公式：target_size = score × max_weight × leverage × NAV / price
-        # max_weight 是保证金占用比例，leverage 放大后得到名义价值
+        # 状态机逻辑：
+        # - 无持仓：信号 < min_score → 不开仓，信号 ≥ min_score → 正常计算
+        # - 有持仓：信号在 [0, min_score] → 保持最低持仓（按 min_score 算）
         nav = self._account.get_nav_usdt(self._account_id)
         if nav <= 0:
             return
 
         abs_score = abs(combined_score)
 
-        if abs_score < self._min_score:
-            target_size = Decimal(0)
-            target_side = Side.BUY
-        else:
-            # 保证金占用 = max_weight × NAV
-            # 名义价值 = 保证金 × leverage
-            # 仓位数量 = 名义价值 / price = max_weight × leverage × NAV / price
-            target_size = (Decimal(str(abs_score))
-                           * self._max_weight
-                           * self._leverage
-                           * nav / price)
-            target_size = event.instrument.round_qty(target_size)
-            target_side = Side.BUY if combined_score > 0 else Side.SELL
-
-            if not self._allow_short and target_side == Side.SELL:
-                target_size = Decimal(0)
-                target_side = Side.BUY
-
-        # ── delta 检查 ────────────────────────────────────────────────────────
+        # 判断当前是否有持仓
         cur_pos = self._account.get_position(self._account_id, sym)
-        current_size = cur_pos.size if cur_pos else Decimal(0)
+        if cur_pos and not cur_pos.is_empty:
+            current_size = cur_pos.size if cur_pos.side == PositionSide.LONG else -cur_pos.size
+            has_position = True
+        else:
+            current_size = Decimal(0)
+            has_position = False
 
-        delta = abs(target_size - current_size)
-        if delta < event.instrument.lot_size:
+        # 计算目标仓位
+        if abs_score < self._min_score:
+            if has_position:
+                # 有持仓但信号弱 → 保持最低持仓（按 min_score 算）
+                abs_score = Decimal(str(self._min_score))
+            else:
+                # 无持仓且信号弱 → 不开仓
+                target_size = Decimal(0)
+                delta = target_size - current_size
+                if abs(delta) < event.instrument.lot_size:
+                    return
+
+                self._bus.publish(
+                    TargetPositionEvent(
+                        account_id   = self._account_id,
+                        instrument   = event.instrument,
+                        target_size  = target_size,
+                        current_size = current_size,
+                    ).caused_by(event)
+                )
+                return
+
+        # 正常计算仓位：score × max_weight × leverage × NAV / price
+        raw_size = (Decimal(str(abs_score))
+                    * self._max_weight
+                    * self._leverage
+                    * nav / price)
+        raw_size = event.instrument.round_qty(raw_size)
+
+        # 带符号：score > 0 → 正（多头），score < 0 → 负（空头），score = 0 保持原方向
+        if combined_score > 0:
+            target_size = raw_size
+        elif combined_score < 0:
+            target_size = -raw_size
+        else:
+            # score = 0 时，保持原有仓位方向
+            target_size = raw_size if current_size >= 0 else -raw_size
+
+        if not self._allow_short and target_size < 0:
+            target_size = Decimal(0)
+
+        delta = target_size - current_size
+        if abs(delta) < event.instrument.lot_size:
             return
 
         # ── 下单冷却（防止填单前重复提交）────────────────────────────────────
@@ -142,16 +172,16 @@ class PortfolioService:
                 account_id   = self._account_id,
                 instrument   = event.instrument,
                 target_size  = target_size,
-                target_side  = target_side,
                 current_size = current_size,
             ).caused_by(event)
         )
 
         n_strategies = len(sym_signals)
-        log.debug("target  %s  size=%.6f  side=%s  combined_score=%.3f  "
-                  "n_strategies=%d",
-                  sym, target_size, target_side.value, combined_score,
-                  n_strategies)
+        direction = "LONG" if target_size > 0 else ("SHORT" if target_size < 0 else "FLAT")
+        log.debug("target  %s  size=%.6f (%s)  current=%.6f  delta=%.6f  "
+                  "combined_score=%.3f  n_strategies=%d",
+                  sym, abs(target_size), direction, current_size, delta,
+                  combined_score, n_strategies)
 
     @property
     def active_strategies(self) -> set[str]:

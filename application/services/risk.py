@@ -62,39 +62,47 @@ class RiskService:
         sym        = instrument.symbol
 
         # ── 1. 计算下单 delta ─────────────────────────────────────────────────
+        # target_size 和 current_size 均带符号：正=多头，负=空头
+        # delta > 0 → 需要买入（增多头/减空头）
+        # delta < 0 → 需要卖出（减多头/增空头）
         delta = event.target_size - event.current_size
         if abs(delta) < instrument.lot_size:
-            return   # delta 太小，忽略（PortfolioService 应已过滤，双重保险）
+            return   # delta 太小，忽略
 
         # ── 2. 构建订单 ───────────────────────────────────────────────────────
         price: Decimal | None = self._cache.get(f"price:{sym}")
-        # ── 订单方向由 delta 符号决定，而非 target_side ──────────────────────
-        # target_side 是目标仓位方向（多/空），不是订单方向。
-        # 当 current > target（需要减仓）时：delta < 0 → SELL 单
-        # 当 current < target（需要增仓）时：delta > 0 → BUY 单
-        is_reducing  = delta < 0
-        order_side   = Side.SELL if is_reducing else Side.BUY
-
+        is_buy = delta > 0
+        order_side = Side.BUY if is_buy else Side.SELL
         order_qty = instrument.round_qty(abs(delta))
 
         # reduce_only 逻辑：
-        # - 单向持仓模式（BOTH）：SELL 平多仓 / BUY 平空仓，不需要 reduceOnly
-        # - 仅在"减仓但不超过当前持仓"时设置 reduceOnly，
-        #   防止 FillEvent 滞后导致超量下单
+        # 只有在"减少仓位但不开反向仓"时设 reduceOnly。
+        # 具体来说：
+        #   - 多头减仓到更小多头（delta<0, target>0）: reduce_only=True
+        #   - 多头全平（delta<0, target=0）: reduce_only=True
+        #   - 多头翻空（delta<0, target<0）: reduce_only=False（先平后开）
+        #   - 空头减仓到更小空头（delta>0, target<0）: reduce_only=True
+        #   - 空头全平（delta>0, target=0）: reduce_only=True
+        #   - 空头翻多（delta>0, target>0）: reduce_only=False（先平后开）
         reduce_only = False
-        if is_reducing:
-            cur_pos  = self._account.get_position(
-                event.account_id, instrument.symbol)
-            cur_size = cur_pos.size if cur_pos else Decimal(0)
-            # 如果减仓量 >= 当前持仓，说明是翻仓（平多+开空），不设 reduceOnly
-            # 如果减仓量 < 当前持仓，说明是部分减仓，设 reduceOnly 防超量
-            if order_qty <= cur_size:
-                reduce_only = True
-            # 限制数量不超过当前持仓（安全兜底）
-            order_qty = instrument.round_qty(min(order_qty, cur_size))
-            if order_qty < instrument.lot_size:
-                log.debug("reduce qty capped to 0, skip: %s", instrument.symbol)
-                return
+        if is_buy:
+            # 买入减少空头仓位时检查 reduceOnly
+            if event.current_size < 0:  # 当前有空头仓位
+                reduce_qty = min(order_qty, abs(event.current_size))
+                if event.target_size <= 0:  # 目标仍为空头或平仓，不是翻仓
+                    reduce_only = True
+                order_qty = instrument.round_qty(reduce_qty)
+        else:
+            # 卖出减少多头仓位时检查 reduceOnly
+            if event.current_size > 0:  # 当前有多头仓位
+                reduce_qty = min(order_qty, event.current_size)
+                if event.target_size >= 0:  # 目标仍为多头或平仓，不是翻仓
+                    reduce_only = True
+                order_qty = instrument.round_qty(reduce_qty)
+
+        if order_qty < instrument.lot_size:
+            log.debug("reduce qty capped to 0, skip: %s", instrument.symbol)
+            return
 
         order = Order(
             instrument  = instrument,

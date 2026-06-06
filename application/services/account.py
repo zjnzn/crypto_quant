@@ -130,31 +130,85 @@ class AccountService:
     def _apply_buy(self, pos, event) -> tuple[Decimal, Position]:
         qty, price = event.settled_qty, event.avg_price
         if pos is None or pos.is_empty:
+            # 无仓位 → 买入开多
             new_size, new_entry = qty, price
-        else:
+            new_side = PositionSide.LONG
+        elif pos.side == PositionSide.LONG:
+            # 多头加仓
             new_size  = pos.size + qty
             new_entry = (pos.size * pos.entry_price + qty * price) / new_size
+            new_side = PositionSide.LONG
+        else:
+            # 空头 → 买入平空
+            close_qty = min(qty, pos.size)
+            realized_pnl = close_qty * (pos.entry_price - price)
+            remaining = pos.size - close_qty
+            leftover_buy = qty - close_qty
+            if remaining > 0:
+                # 部分平空
+                new_size = remaining
+                new_entry = pos.entry_price
+                new_side = PositionSide.SHORT
+            elif leftover_buy > 0:
+                # 平空后翻多
+                new_size = leftover_buy
+                new_entry = price
+                new_side = PositionSide.LONG
+            else:
+                new_size = Decimal(0)
+                new_entry = Decimal(0)
+                new_side = PositionSide.LONG
+            return realized_pnl, Position(
+                instrument=event.instrument, account_id=event.account_id,
+                strategy_id="", side=new_side,
+                size=new_size, entry_price=new_entry,
+            )
         return Decimal(0), Position(
             instrument=event.instrument, account_id=event.account_id,
-            strategy_id="", side=PositionSide.LONG,
+            strategy_id="", side=new_side,
             size=new_size, entry_price=new_entry,
         )
 
     def _apply_sell(self, pos, event) -> tuple[Decimal, Position]:
-        qty = event.settled_qty
+        qty, price = event.settled_qty, event.avg_price
         if pos is None or pos.is_empty:
-            log.warning("卖出但无持仓: %s", event.instrument.symbol)
-            return Decimal(0), Position(
+            # 无仓位 → 卖出开空
+            new_size, new_entry = qty, price
+            new_side = PositionSide.SHORT
+        elif pos.side == PositionSide.SHORT:
+            # 空头加仓
+            new_size  = pos.size + qty
+            new_entry = (pos.size * pos.entry_price + qty * price) / new_size
+            new_side = PositionSide.SHORT
+        else:
+            # 多头 → 卖出平多
+            close_qty = min(qty, pos.size)
+            realized_pnl = close_qty * (price - pos.entry_price)
+            remaining = pos.size - close_qty
+            leftover_sell = qty - close_qty
+            if remaining > 0:
+                # 部分平多
+                new_size = remaining
+                new_entry = pos.entry_price
+                new_side = PositionSide.LONG
+            elif leftover_sell > 0:
+                # 平多后翻空
+                new_size = leftover_sell
+                new_entry = price
+                new_side = PositionSide.SHORT
+            else:
+                new_size = Decimal(0)
+                new_entry = Decimal(0)
+                new_side = PositionSide.LONG
+            return realized_pnl, Position(
                 instrument=event.instrument, account_id=event.account_id,
-                strategy_id="", side=PositionSide.LONG,
-                size=Decimal(0), entry_price=Decimal(0),
+                strategy_id="", side=new_side,
+                size=new_size, entry_price=new_entry,
             )
-        close_qty    = min(qty, pos.size)
-        realized_pnl = close_qty * (event.avg_price - pos.entry_price)
-        return realized_pnl, Position(
+        return Decimal(0), Position(
             instrument=event.instrument, account_id=event.account_id,
-            strategy_id="", side=PositionSide.LONG,
-            size=pos.size - close_qty, entry_price=pos.entry_price,
+            strategy_id="", side=new_side,
+            size=new_size, entry_price=new_entry,
         )
 
     def force_sync_position(

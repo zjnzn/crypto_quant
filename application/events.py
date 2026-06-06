@@ -84,13 +84,14 @@ class SignalEvent(Event):
 class TargetPositionEvent(Event):
     """
     PortfolioService 计算后的目标仓位。
-    delta = target_size - current_size 决定需要下多大的订单。
+    target_size 带符号：正=多头，负=空头，0=平仓。
+    delta = target_size - current_size 决定订单方向和数量：
+      delta > 0 → BUY，delta < 0 → SELL
     """
     account_id:   str        = ""
     instrument:   Instrument = None
-    target_size:  Decimal    = Decimal(0)   # 目标持仓量（0 = 全平）
-    target_side:  Side       = Side.BUY
-    current_size: Decimal    = Decimal(0)   # 当前持仓量
+    target_size:  Decimal    = Decimal(0)   # 带符号目标持仓量
+    current_size: Decimal    = Decimal(0)   # 带符号当前持仓量
 
 
 # ── 风控事件 ─────────────────────────────────────────────────────────────────

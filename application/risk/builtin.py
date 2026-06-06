@@ -15,6 +15,7 @@ import logging
 from decimal import Decimal
 
 from core.domain.order import Order, Side
+from core.domain.position import PositionSide
 from core.ports.risk import RiskContext, RiskResult
 from application.risk.pipeline import RiskMiddleware, Next
 
@@ -42,8 +43,14 @@ class PositionLimitMiddleware(RiskMiddleware):
             return call_next(order, ctx)   # 平仓单直接放行
 
         cur = ctx.positions.get(order.instrument.symbol)
-        cur_size = cur.size if cur else Decimal(0)
-        delta    = order.qty if order.side == Side.BUY else -order.qty
+        # 带符号当前仓位：多头为正，空头为负
+        if cur and not cur.is_empty:
+            cur_size = cur.size if cur.side == PositionSide.LONG else -cur.size
+        else:
+            cur_size = Decimal(0)
+
+        # BUY 增加仓位，SELL 减少仓位
+        delta = order.qty if order.side == Side.BUY else -order.qty
         new_size = cur_size + delta
 
         # 用 limit_price 估算，无 limit_price 用 0（market order，偏保守）
