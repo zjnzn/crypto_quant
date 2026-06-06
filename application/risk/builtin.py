@@ -32,8 +32,9 @@ class PositionLimitMiddleware(RiskMiddleware):
     """
     name = "position_limit"
 
-    def __init__(self, max_weight: float = 0.10) -> None:
+    def __init__(self, max_weight: float = 0.10, leverage: int = 1) -> None:
         self._max = Decimal(str(max_weight))
+        self._leverage = leverage
 
     def process(self, order: Order, ctx: RiskContext,
                 call_next: Next) -> RiskResult:
@@ -48,8 +49,8 @@ class PositionLimitMiddleware(RiskMiddleware):
         # 用 limit_price 估算，无 limit_price 用 0（market order，偏保守）
         est_price = order.limit_price or Decimal(1)
         if ctx.nav_usdt > 0:
-            # 获取杠杆倍数（从当前仓位或默认 1）
-            leverage = cur.leverage if cur and cur.leverage > 0 else 1
+            # 获取杠杆倍数：优先从仓位取，新开仓用配置的默认值
+            leverage = cur.leverage if cur and cur.leverage > 0 else self._leverage
 
             # 保证金占用 = 名义价值 / 杠杆
             notional = abs(new_size * est_price)

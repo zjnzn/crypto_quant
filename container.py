@@ -136,7 +136,7 @@ def build(cfg: Config) -> System:
     # ── 7. 风控管道（顺序 = 优先级）──────────────────────────────────────────
     risk_pipeline = RiskPipeline([
         MinNotionalMiddleware(),
-        PositionLimitMiddleware(max_weight=cfg.risk.max_weight),
+        PositionLimitMiddleware(max_weight=cfg.risk.max_weight, leverage=cfg.risk.leverage),
         MaxLeverageMiddleware(global_max=cfg.risk.max_leverage),
         DrawdownMiddleware(max_drawdown=cfg.risk.max_drawdown),
         FundingRateMiddleware(max_rate=cfg.risk.max_funding_rate),
