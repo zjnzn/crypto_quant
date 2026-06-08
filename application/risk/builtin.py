@@ -190,3 +190,111 @@ class OpenOrdersLimitMiddleware(RiskMiddleware):
                 f"{order.instrument.symbol} 在途订单 {count} 达到上限 {self._max}"
             )
         return call_next(order, ctx)
+
+
+class MinRebalanceMiddleware(RiskMiddleware):
+    """
+    最小调仓量过滤:仓位变化小于 NAV 的 min_delta_pct 比例时拒绝下单。
+    
+    实盘场景:
+      - 避免频繁小额调仓,手续费吞噬收益
+      - 例如 min_delta_pct=0.05 表示调仓量必须 ≥ 5% NAV
+    
+    特例:
+      - 完全平仓(订单量等于当前持仓)放行,即使 delta 小于阈值
+      - reduce_only 订单检查实际减仓量
+    """
+    name = "min_rebalance"
+
+    def __init__(self, min_delta_pct: float = 0.05) -> None:
+        self._min_delta_pct = Decimal(str(min_delta_pct))
+
+    def process(self, order: Order, ctx: RiskContext,
+                call_next: Next) -> RiskResult:
+        # 1. 计算订单名义价值
+        est_price = order.limit_price or Decimal("1")
+        order_notional = order.qty * est_price
+        
+        # 2. 获取当前持仓
+        cur_pos = ctx.positions.get(order.instrument.symbol)
+        
+        # 3. 判断是否完全平仓
+        if order.reduce_only and cur_pos and not cur_pos.is_empty:
+            if order.qty >= cur_pos.size * Decimal("0.99"):  # 允许 1% 滑点
+                # 完全平仓,放行
+                return call_next(order, ctx)
+        
+        # 4. 检查调仓量是否足够大
+        nav = ctx.nav_usdt
+        min_delta_usdt = nav * self._min_delta_pct
+        
+        if order_notional < min_delta_usdt:
+            return RiskResult.reject(
+                f"调仓量过小: {order_notional:.2f} USDT < "
+                f"最小要求 {min_delta_usdt:.2f} USDT "
+                f"({float(self._min_delta_pct)*100:.1f}% NAV)"
+            )
+        
+        return call_next(order, ctx)
+
+
+class ExpectedProfitMiddleware(RiskMiddleware):
+    """
+    预期收益必须大于交易成本(手续费 + 滑点)。
+    
+    实盘场景:
+      - 手续费: 币安永续 0.02% (maker) / 0.04% (taker)
+      - 滑点: 通常 0.01% ~ 0.05%
+      - 总成本: 约 0.05% ~ 0.10%
+    
+    使用方式:
+      1. 策略在 SignalEvent.meta 中传递 expected_return_pct
+      2. PortfolioService 将其写入 RiskContext.extra["expected_return_pct"]
+      3. 本中间件检查: expected_return ≥ min_profit_multiplier × trading_cost
+    
+    参数:
+      trading_cost_pct: 单边交易成本百分比 (如 0.0007 = 0.07%)
+      min_profit_multiplier: 安全系数,预期收益必须 >= multiplier × 成本
+                             推荐值 2.0 ~ 3.0
+    """
+    name = "expected_profit"
+
+    def __init__(
+        self,
+        trading_cost_pct: float = 0.0007,      # 0.07%
+        min_profit_multiplier: float = 3.0,    # 3x 安全系数
+    ) -> None:
+        self._trading_cost_pct = Decimal(str(trading_cost_pct))
+        self._profit_multiplier = Decimal(str(min_profit_multiplier))
+
+    def process(self, order: Order, ctx: RiskContext,
+                call_next: Next) -> RiskResult:
+        # 1. 平仓订单直接放行
+        if order.reduce_only:
+            return call_next(order, ctx)
+        
+        # 2. 获取预期收益率
+        expected_return_pct = ctx.extra.get("expected_return_pct")
+        
+        if expected_return_pct is None:
+            # 无预期收益信息,记录警告后放行
+            log.warning(
+                "ExpectedProfitMiddleware: %s 无预期收益信息,建议策略传递 expected_return_pct",
+                order.instrument.symbol
+            )
+            return call_next(order, ctx)
+        
+        expected_return_pct = Decimal(str(expected_return_pct))
+        
+        # 3. 计算最小要求收益
+        min_required_pct = self._trading_cost_pct * self._profit_multiplier
+        
+        # 4. 比较
+        if expected_return_pct < min_required_pct:
+            return RiskResult.reject(
+                f"预期收益过低: {float(expected_return_pct)*100:.3f}% < "
+                f"最小要求 {float(min_required_pct)*100:.3f}% "
+                f"(成本{float(self._trading_cost_pct)*100:.3f}% × {float(self._profit_multiplier)}x安全系数)"
+            )
+        
+        return call_next(order, ctx)

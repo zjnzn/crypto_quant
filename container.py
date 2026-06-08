@@ -33,6 +33,8 @@ from application.risk.builtin       import (DrawdownMiddleware,
                                              FundingRateMiddleware,
                                              MaxLeverageMiddleware,
                                              MinNotionalMiddleware,
+                                             MinRebalanceMiddleware,
+                                             ExpectedProfitMiddleware,
                                              PositionLimitMiddleware)
 from application.services.account   import AccountService
 from application.services.monitor   import MonitorService
@@ -134,7 +136,18 @@ def build(cfg: Config) -> System:
         log.warning("未配置策略，使用默认 MomentumStrategy")
 
     # ── 7. 风控管道（顺序 = 优先级）──────────────────────────────────────────
+    # 实盘手续费保护框架:
+    #   1. MinRebalanceMiddleware - 最小调仓量过滤
+    #   2. ExpectedProfitMiddleware - 预期收益 > 交易成本
+    #   3. 原有风控规则(仓位、杠杆、回撤等)
     risk_pipeline = RiskPipeline([
+        # 手续费保护(最优先)
+        MinRebalanceMiddleware(min_delta_pct=cfg.risk.min_rebalance_pct),
+        ExpectedProfitMiddleware(
+            trading_cost_pct=cfg.risk.trading_cost_pct,
+            min_profit_multiplier=cfg.risk.profit_multiplier,
+        ),
+        # 原有风控规则
         MinNotionalMiddleware(),
         PositionLimitMiddleware(max_weight=cfg.risk.max_weight, leverage=cfg.risk.leverage),
         MaxLeverageMiddleware(global_max=cfg.risk.max_leverage),
@@ -155,12 +168,9 @@ def build(cfg: Config) -> System:
         account        = account_svc,
         account_id     = account_id,
         max_weight     = cfg.risk.max_weight,
-        min_score      = cfg.risk.min_score,
-        open_score     = cfg.risk.open_score,
+        min_score      = 0.15,
         leverage       = cfg.risk.leverage,
         order_cooldown = cfg.risk.order_cooldown,
-        min_rebalance  = cfg.risk.min_rebalance,
-        taker_fee      = cfg.risk.taker_fee,
     )
     RiskService(
         bus       = bus,

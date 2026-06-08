@@ -235,13 +235,17 @@ class RiskService:
         open_orders: list[Order] = []
 
         # 资金费率（从 cache 读取所有 funding:* 键）
-        funding_rates: dict[str, Decimal] = {}
+        funding_rates: dict[str, Decimal] = {} = {}
         rate = self._cache.get(f"funding:{symbol}")
         if rate is not None:
             funding_rates[symbol] = rate
 
         # 日内回撤（Phase 2 暂无，Phase 3 由 MonitorService 写入）
         daily_drawdown = self._cache.get(f"drawdown:{account_id}") or Decimal(0)
+        
+        # ── 预期收益信息(手续费保护)────────────────────────────────────────────
+        # 从 cache 读取 PortfolioService 写入的预期收益率
+        expected_return_pct = self._cache.get(f"expected_return:{symbol}")
 
         return RiskContext(
             account_id    = account_id,
@@ -249,5 +253,8 @@ class RiskService:
             positions     = positions,
             open_orders   = open_orders,
             funding_rates = funding_rates,
-            extra         = {"daily_drawdown": daily_drawdown},
+            extra         = {
+                "daily_drawdown": daily_drawdown,
+                "expected_return_pct": expected_return_pct,
+            },
         )

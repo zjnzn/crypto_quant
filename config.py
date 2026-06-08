@@ -41,10 +41,11 @@ class RiskConfig:
     max_funding_rate: float = 0.003
     warn_drawdown:    float = 0.03
     order_cooldown:   float = 0.0     # 同标的两次下单最小间隔（秒，实盘建议5s）
-    min_score:        float = 0.15    # 平仓/保持阈值（有持仓时）
-    open_score:       float = 0.30    # 开仓阈值（无持仓时，> min_score 形成迟滞）
-    min_rebalance:    float = 0.05    # 最小调仓比例：仓位变化 < 5% 不交易
-    taker_fee:        float = 0.0004  # taker 手续费率（币安 USDT-M 默认 0.04%）
+    
+    # ── 手续费保护参数 ─────────────────────────────────────────────
+    min_rebalance_pct:       float = 0.05    # 最小调仓量(% NAV),低于此阈值拒绝下单
+    trading_cost_pct:        float = 0.0007  # 单边交易成本(手续费+滑点),币安永续约0.07%
+    profit_multiplier:       float = 3.0     # 预期收益安全系数,推荐2-3x     # 同标的两次下单最小间隔（秒，实盘建议5s）
 
 
 @dataclass
