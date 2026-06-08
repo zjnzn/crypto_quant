@@ -41,7 +41,7 @@ strategies:
   - module: "strategies.momentum.MomentumStrategy"
     params:
       window:    20
-      scale:     0.002  # scale 随杠杆调整：0.0020/5=0.0004，保持信号-仓位映射不变
+      scale:     0.0015  # scale 随杠杆调整：0.0020/5=0.0004，保持信号-仓位映射不变
       min_score: 0.35    # 提高阈值：过滤弱信号，减少频繁交易
 
   # - module: "strategies.mean_reversion.MeanReversionStrategy"
