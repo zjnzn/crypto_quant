@@ -40,10 +40,9 @@ monitor:
 strategies:
   - module: "strategies.momentum.MomentumStrategy"
     params:
-      window:          20
-      scale:           0.0020  # 降低敏感度：0.20% 收益率 → score=1.0
-      min_score:       0.35    # 提高阈值：过滤弱信号，减少频繁交易
-      signal_cooldown: 300.0   # 信号冷却期：5分钟内不重复发信号
+      window:    20
+      scale:     0.0020  # 降低敏感度：0.20% 收益率 → score=1.0
+      min_score: 0.35    # 提高阈值：过滤弱信号，减少频繁交易
 
   # - module: "strategies.mean_reversion.MeanReversionStrategy"
   #   params:
