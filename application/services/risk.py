@@ -235,7 +235,7 @@ class RiskService:
         open_orders: list[Order] = []
 
         # 资金费率（从 cache 读取所有 funding:* 键）
-        funding_rates: dict[str, Decimal] = {} = {}
+        funding_rates: dict[str, Decimal] = {}
         rate = self._cache.get(f"funding:{symbol}")
         if rate is not None:
             funding_rates[symbol] = rate
