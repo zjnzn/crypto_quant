@@ -155,9 +155,12 @@ def build(cfg: Config) -> System:
         account        = account_svc,
         account_id     = account_id,
         max_weight     = cfg.risk.max_weight,
-        min_score      = 0.15,
+        min_score      = cfg.risk.min_score,
+        open_score     = cfg.risk.open_score,
         leverage       = cfg.risk.leverage,
         order_cooldown = cfg.risk.order_cooldown,
+        min_rebalance  = cfg.risk.min_rebalance,
+        taker_fee      = cfg.risk.taker_fee,
     )
     RiskService(
         bus       = bus,
