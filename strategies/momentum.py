@@ -47,19 +47,15 @@ class MomentumStrategy:
 
     def __init__(
         self,
-        window:          int   = 20,
-        scale:           float = 0.05,
-        min_score:       float = 0.15,
-        signal_cooldown: float = 60.0,  # 信号冷却期（秒）
+        window:    int   = 20,
+        scale:     float = 0.05,
+        min_score: float = 0.15,
     ) -> None:
-        self._window          = window
-        self._scale           = scale
-        self._min_score       = min_score
-        self._signal_cooldown = signal_cooldown
+        self._window    = window
+        self._scale     = scale
+        self._min_score = min_score
         # deque 自动限制窗口长度（满后自动丢弃最旧值）
         self._prices: dict[str, deque[Decimal]] = {}
-        # 上次发信号的时间（单调时钟）
-        self._last_signal_ts: dict[str, float] = {}
 
     # ── Strategy 协议实现 ──────────────────────────────────────────────────────
 
@@ -77,22 +73,13 @@ class MomentumStrategy:
         if len(buf) < self._window:
             return []
 
-        # 3. 信号冷却期检查（防止高频信号导致频繁交易）
-        import time
-        last_ts = self._last_signal_ts.get(sym, 0.0)
-        if time.monotonic() - last_ts < self._signal_cooldown:
-            return []
-
-        # 4. 计算动量分数
+        # 3. 计算动量分数
         prices = list(buf)
         score, confidence = self._calc_score(prices)
 
-        # 5. 信号过弱，不发出
+        # 4. 信号过弱，不发出
         if abs(score) < self._min_score:
             return []
-
-        # 6. 发出信号，记录时间
-        self._last_signal_ts[sym] = time.monotonic()
 
         return [Signal(
             instrument  = event.instrument,
@@ -118,9 +105,8 @@ class MomentumStrategy:
         pass        # 动量策略状态不依赖成交回报
 
     def on_start(self, ctx: "StrategyContext") -> None:
-        log.info("%s 启动  window=%d  scale=%.2f%%  min_score=%.2f  signal_cooldown=%.0fs",
-                 self.name, self._window, self._scale * 100, self._min_score,
-                 self._signal_cooldown)
+        log.info("%s 启动  window=%d  scale=%.2f%%  min_score=%.2f",
+                 self.name, self._window, self._scale * 100, self._min_score)
 
     def on_stop(self, ctx: "StrategyContext") -> None:
         log.info("%s 停止", self.name)
