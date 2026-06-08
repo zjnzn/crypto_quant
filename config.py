@@ -41,11 +41,12 @@ class RiskConfig:
     max_funding_rate: float = 0.003
     warn_drawdown:    float = 0.03
     order_cooldown:   float = 0.0     # 同标的两次下单最小间隔（秒，实盘建议5s）
-    
+
     # ── 手续费保护参数 ─────────────────────────────────────────────
     min_rebalance_pct:       float = 0.05    # 最小调仓量(% NAV),低于此阈值拒绝下单
     trading_cost_pct:        float = 0.0007  # 单边交易成本(手续费+滑点),币安永续约0.07%
-    profit_multiplier:       float = 3.0     # 预期收益安全系数,推荐2-3x     # 同标的两次下单最小间隔（秒，实盘建议5s）
+    profit_multiplier:       float = 3.0     # 预期收益安全系数,推荐2-3x
+    reversal_threshold:      float = 0.50    # 翻仓最小信号强度(信号绝对值必须≥此值)
 
 
 @dataclass

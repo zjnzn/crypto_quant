@@ -178,6 +178,7 @@ def build(cfg: Config) -> System:
         account   = account_svc,
         cache     = cache,
         exchange  = exchange,
+        reversal_threshold = cfg.risk.reversal_threshold,
     )
     OMSService(
         bus      = bus,

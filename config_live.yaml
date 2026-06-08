@@ -37,6 +37,7 @@ risk:
   min_rebalance_pct:       0.05    # 最小调仓量 5% NAV,低于此拒绝下单
   trading_cost_pct:        0.0006  # 币安永续手续费+滑点:0.04%+0.02%=0.06%
   profit_multiplier:       2.0     # 预期收益必须≥2×成本(安全系数)→阈值0.12%
+  reversal_threshold:      0.50    # 翻仓最小信号强度,信号绝对值必须≥此值才允许翻仓
 
 monitor:
   warn_drawdown:     0.03   # 3% 告警

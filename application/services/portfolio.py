@@ -103,6 +103,13 @@ class PortfolioService:
                 Decimal(str(expected_return_pct)),
             )
 
+        # ── 信号分数传递(翻仓保护)──────────────────────────────────────────────
+        # 将组合后的信号分数写入 cache,用于翻仓时检查信号强度
+        self._cache.set(
+            f"signal_score:{sym}",
+            Decimal(str(combined_score)),
+        )
+
         # ── 目标仓位计算 ──────────────────────────────────────────────────────
         # 状态机逻辑：
         # - 无持仓：信号 < min_score → 不开仓，信号 ≥ min_score → 正常计算

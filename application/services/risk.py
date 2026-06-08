@@ -51,7 +51,14 @@ class RiskService:
         account:   AccountPort,
         cache:     CachePort,
         exchange:  ExecutionPort | None = None,
+        reversal_threshold: float = 0.50,  # 翻仓最小信号强度
     ) -> None:
+        self._bus       = bus
+        self._pipeline  = pipeline
+        self._account   = account
+        self._cache     = cache
+        self._exchange  = exchange
+        self._reversal_threshold = Decimal(str(reversal_threshold))
         self._bus      = bus
         self._pipeline = pipeline
         self._account  = account
@@ -104,6 +111,24 @@ class RiskService:
                       (real_current_size < 0 and event.target_size > 0)
 
         if is_reversal:
+            # ── 翻仓信号强度检查 ────────────────────────────────────────────────
+            # 翻仓需要更强的信号(避免频繁翻仓带来双倍手续费)
+            signal_score = self._cache.get(f"signal_score:{sym}")
+
+            if signal_score is None:
+                log.warning("翻仓检测: %s 无信号分数信息,跳过翻仓", sym)
+                return
+
+            signal_score = Decimal(str(signal_score))
+
+            # 检查信号绝对值是否足够强
+            if abs(signal_score) < self._reversal_threshold:
+                log.warning(
+                    "翻仓拒绝: %s 信号强度 %.3f < 阈值 %.3f,跳过翻仓",
+                    sym, float(abs(signal_score)), float(self._reversal_threshold)
+                )
+                return
+
             # 第一步：平掉当前仓位
             close_qty = instrument.round_qty(abs(real_current_size))
             close_side = Side.SELL if real_current_size > 0 else Side.BUY
