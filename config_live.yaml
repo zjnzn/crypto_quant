@@ -45,16 +45,16 @@ monitor:
   critical_drawdown: 0.08   # 5% 熔断
 
 strategies:
-  # - module: "strategies.momentum.MomentumStrategy"
-  #   params:
-  #     window:    30
-  #     scale:     0.002  # 降低敏感度：2% 价格变动触发强信号
-
-  - module: "strategies.mean_reversion.MeanReversionStrategy"
+  - module: "strategies.momentum.MomentumStrategy"
     params:
-      window:      30
-      z_entry:     2.0    # Z-score 阈值
-      z_threshold: 3.0
+      window:    30
+      scale:     0.002  # 降低敏感度：2% 价格变动触发强信号
+
+  # - module: "strategies.mean_reversion.MeanReversionStrategy"
+  #   params:
+  #     window:      30
+  #     z_entry:     2.0    # Z-score 阈值
+  #     z_threshold: 3.0
 
   # - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
   #   params:
