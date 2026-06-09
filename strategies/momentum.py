@@ -49,11 +49,9 @@ class MomentumStrategy:
         self,
         window:    int   = 20,
         scale:     float = 0.05,
-        min_score: float = 0.15,
     ) -> None:
         self._window    = window
         self._scale     = scale
-        self._min_score = min_score
         # deque 自动限制窗口长度（满后自动丢弃最旧值）
         self._prices: dict[str, deque[Decimal]] = {}
 
@@ -76,10 +74,6 @@ class MomentumStrategy:
         # 3. 计算动量分数
         prices = list(buf)
         score, confidence = self._calc_score(prices)
-
-        # 4. 信号过弱，不发出
-        if abs(score) < self._min_score:
-            return []
 
         return [Signal(
             instrument  = event.instrument,
@@ -105,8 +99,8 @@ class MomentumStrategy:
         pass        # 动量策略状态不依赖成交回报
 
     def on_start(self, ctx: "StrategyContext") -> None:
-        log.info("%s 启动  window=%d  scale=%.2f%%  min_score=%.2f",
-                 self.name, self._window, self._scale * 100, self._min_score)
+        log.info("%s 启动  window=%d  scale=%.2f%%",
+                 self.name, self._window, self._scale * 100)
 
     def on_stop(self, ctx: "StrategyContext") -> None:
         log.info("%s 停止", self.name)
