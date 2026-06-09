@@ -48,7 +48,7 @@ strategies:
   - module: "strategies.momentum.MomentumStrategy"
     params:
       window:    20
-      scale:     0.0002  # 50x 杠杆：0.002×(5/50)=0.0002，保持信号-仓位映射不变
+      scale:     0.002  # 50x 杠杆：0.002×(5/50)=0.0002，保持信号-仓位映射不变
 
   - module: "strategies.mean_reversion.MeanReversionStrategy"
     params:
