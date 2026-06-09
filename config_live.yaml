@@ -23,21 +23,21 @@ execution:
 
 account:
   main_id: main
-  initial_usdt: 10.0  # 仅用于回测初始化，实盘从交易所拉取
+  initial_usdt: 5000.0  # 仅用于回测初始化，实盘从交易所拉取
 
 risk:
   max_weight:       0.02    # 单标的保证金占用上限（leverage 提高 → 降低 max_weight 保持敞口不变）
-  max_leverage:     100       # 全局最大杠杆（实盘建议保守）
-  leverage:         100       # 目标杠杆倍数（用于仓位计算）
-  max_drawdown:     0.05    # 5% 回撤熔断
+  max_leverage:     50       # 全局最大杠杆（实盘建议保守）
+  leverage:         50       # 目标杠杆倍数（用于仓位计算）
+  max_drawdown:     0.08    # 5% 回撤熔断
   max_funding_rate: 0.003   # 0.3%/8h 资金费率上限
   order_cooldown:   5.0     # 同标的两次下单最小间隔（秒，防止重复下单）
 
   # ── 手续费保护框架 ─────────────────────────────────────────────────────
-  min_rebalance_pct:       0.05    # 最小调仓量 5% NAV,低于此拒绝下单
+  min_rebalance_pct:       0.01    # 最小调仓量 5% NAV,低于此拒绝下单
   trading_cost_pct:        0.0006  # 币安永续手续费+滑点:0.04%+0.02%=0.06%
   profit_multiplier:       2.0     # 预期收益必须≥2×成本(安全系数)→阈值0.12%
-  reversal_threshold:      0.35    # 翻仓最小信号强度,信号绝对值必须≥此值才允许翻仓
+  reversal_threshold:      0.50   # 翻仓最小信号强度,信号绝对值必须≥此值才允许翻仓
   min_score:               0.30    # 开仓最小信号强度,信号绝对值必须≥此值才开新仓
 
 monitor:
@@ -49,7 +49,7 @@ strategies:
     params:
       window:    20
       scale:     0.002  # scale 随杠杆调整：0.0020/5=0.0004，保持信号-仓位映射不变
-      min_score: 0.30    # 提高阈值：过滤弱信号，减少频繁交易
+      min_score: 0.35    # 提高阈值：过滤弱信号，减少频繁交易
 
   # - module: "strategies.mean_reversion.MeanReversionStrategy"
   #   params:
