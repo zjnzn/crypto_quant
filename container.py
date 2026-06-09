@@ -152,7 +152,10 @@ def build(cfg: Config) -> System:
         PositionLimitMiddleware(max_weight=cfg.risk.max_weight, leverage=cfg.risk.leverage),
         MaxLeverageMiddleware(global_max=cfg.risk.max_leverage),
         DrawdownMiddleware(max_drawdown=cfg.risk.max_drawdown),
-        FundingRateMiddleware(max_rate=cfg.risk.max_funding_rate),
+        FundingRateMiddleware(
+            max_positive=cfg.risk.max_funding_rate,
+            max_negative=cfg.risk.max_funding_rate,
+        ),
     ])
 
     # ── 8. 应用服务（构造即完成 bus.subscribe 注册）──────────────────────────

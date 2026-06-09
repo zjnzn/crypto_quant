@@ -465,7 +465,7 @@ class TestRiskPipeline:
             open_orders   = [],
             funding_rates = {"BTC-USDT-PERP": Decimal("0.005")},
         )
-        pipeline = RiskPipeline([FundingRateMiddleware(max_rate=0.003)])
+        pipeline = RiskPipeline([FundingRateMiddleware(max_positive=0.003, max_negative=0.003)])
         result   = pipeline.check(buy_order, ctx)
         assert not result.passed
         assert "资金费率" in result.reason

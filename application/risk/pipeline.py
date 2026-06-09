@@ -47,7 +47,7 @@ class RiskPipeline:
             PositionLimitMiddleware(max_weight=0.1),
             MaxLeverageMiddleware(global_max=10),
             DrawdownMiddleware(max_drawdown=0.05),
-            FundingRateMiddleware(max_rate=0.003),
+            FundingRateMiddleware(max_positive=0.003, max_negative=0.003),
         ])
         result = pipeline.check(order, ctx)
     """
