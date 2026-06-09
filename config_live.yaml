@@ -31,14 +31,14 @@ risk:
   leverage:         50       # 目标杠杆倍数（用于仓位计算）
   max_drawdown:     0.08    # 5% 回撤熔断
   max_funding_rate: 0.003   # 0.3%/8h 资金费率上限
-  order_cooldown:   10.0     # 同标的两次下单最小间隔（秒，防止重复下单）
+  order_cooldown:   30.0     # 同标的两次下单最小间隔（秒，防止重复下单）
 
   # ── 手续费保护框架 ─────────────────────────────────────────────────────
-  min_rebalance_pct:       0.01    # 最小调仓量 5% NAV,低于此拒绝下单
+  min_rebalance_pct:       0.02    # 最小调仓量 2% NAV,低于此拒绝下单
   trading_cost_pct:        0.0006  # 币安永续手续费+滑点:0.04%+0.02%=0.06%
   profit_multiplier:       2.0     # 预期收益必须≥2×成本(安全系数)→阈值0.12%
-  reversal_threshold:      0.7   # 翻仓最小信号强度,信号绝对值必须≥此值才允许翻仓
-  min_score:               0.6    # 开仓最小信号强度,信号绝对值必须≥此值才开新仓
+  reversal_threshold:      0.85   # 翻仓最小信号强度,信号绝对值必须≥此值才允许翻仓
+  min_score:               0.75    # 开仓最小信号强度,信号绝对值必须≥此值才开新仓
 
 monitor:
   warn_drawdown:     0.05   # 3% 告警
@@ -47,13 +47,13 @@ monitor:
 strategies:
   - module: "strategies.momentum.MomentumStrategy"
     params:
-      window:    20
-      scale:     0.0002  # 50x 杠杆：0.002×(5/50)=0.0002，保持信号-仓位映射不变
+      window:    30
+      scale:     0.002  # 降低敏感度：2% 价格变动触发强信号
 
   - module: "strategies.mean_reversion.MeanReversionStrategy"
     params:
-      window:      20
-      z_entry:     2.0    # 实盘 Z-score 阈值更保守
+      window:      30
+      z_entry:     2.0    # Z-score 阈值
       z_threshold: 3.0
 
   # - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
