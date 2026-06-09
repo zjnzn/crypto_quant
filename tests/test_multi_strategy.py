@@ -255,7 +255,7 @@ class TestMeanReversionStrategy:
 class TestMultiStrategyPortfolio:
     def test_both_strategies_produce_signals(self, btc_perp) -> None:
         """两个策略均能独立产生信号。"""
-        momentum = MomentumStrategy(window=20, scale=0.05, min_score=0.15)
+        momentum = MomentumStrategy(window=20, scale=0.05)
         mr       = MeanReversionStrategy(window=20, z_entry=1.5)
 
         bus, cache, account, monitor, portfolio, feed, clock = (
@@ -299,7 +299,7 @@ class TestMultiStrategyPortfolio:
         SignalService(bus1, cache1, [MomentumStrategy(window=5, scale=0.02,
                       min_score=0.1)], make_ctx1)
         PortfolioService(bus1, cache1, acct1, "main",
-                         max_weight=0.10, min_score=0.1)
+                         max_weight=0.10)
         bus1.subscribe(TargetPositionEvent, targets1.append)
 
         # 动量 + 均值回归
@@ -311,12 +311,12 @@ class TestMultiStrategyPortfolio:
             return StrategyContext("main", sid, SimClock(), cache2, acct2)
 
         SignalService(bus2, cache2,
-                      [MomentumStrategy(window=5, scale=0.02, min_score=0.1),
+                      [MomentumStrategy(window=5, scale=0.02),
                        MeanReversionStrategy(window=5, z_entry=0.5,
                                              z_threshold=1.0)],
                       make_ctx2)
         PortfolioService(bus2, cache2, acct2, "main",
-                         max_weight=0.10, min_score=0.1)
+                         max_weight=0.10)
         bus2.subscribe(TargetPositionEvent, targets2.append)
 
         # 模拟单调上涨（动量正，均值回归负）
@@ -350,10 +350,8 @@ class TestMultiStrategyPortfolio:
 
         # 两个动量策略（不同参数，同向信号）
         SignalService(bus, cache,
-                      [MomentumStrategy(window=5, scale=0.02,
-                                        min_score=0.05, name_override="m1"),
-                       MomentumStrategy(window=8, scale=0.03,
-                                        min_score=0.05, name_override="m2")],
+                      [MomentumStrategy(window=5, scale=0.02, name_override="m1"),
+                       MomentumStrategy(window=8, scale=0.03, name_override="m2")],
                       make_ctx)
         PortfolioService(bus, cache, acct, "main", max_weight=0.10, min_score=0.05)
         bus.subscribe(TargetPositionEvent, targets.append)
@@ -370,7 +368,7 @@ class TestMultiStrategyPortfolio:
         """PortfolioService 追踪当前有信号的策略集合。"""
         bus, cache, account, monitor, portfolio, feed, clock = (
             build_full_system(btc_perp, [
-                MomentumStrategy(window=5, scale=0.02, min_score=0.1),
+                MomentumStrategy(window=5, scale=0.02),
                 MeanReversionStrategy(window=5, z_entry=0.5),
             ])
         )
@@ -403,7 +401,7 @@ class TestMultiStrategyBacktest:
             return StrategyContext("main", sid, clock, cache, account)
 
         strategies = [
-            MomentumStrategy(window=20, scale=0.05, min_score=0.15),
+            MomentumStrategy(window=20, scale=0.05),
             MeanReversionStrategy(window=20, z_entry=1.5, z_threshold=2.5),
         ]
         SignalService(bus, cache, strategies, make_ctx)
@@ -476,8 +474,7 @@ class TestMultiStrategyBacktest:
             bus, cache, account, "main", min_score=0.05
         )
         SignalService(bus, cache,
-                      [MomentumStrategy(window=5, scale=0.02,
-                                        min_score=0.05)], make_ctx)
+                      [MomentumStrategy(window=5, scale=0.02)], make_ctx)
 
         from application.events import TradeEvent
         for i in range(8):
@@ -500,9 +497,8 @@ class TestMultiStrategyBacktest:
 
 _orig_init = MomentumStrategy.__init__
 
-def _patched_init(self, window=20, scale=0.05, min_score=0.15,
-                  name_override=None):
-    _orig_init(self, window=window, scale=scale, min_score=min_score)
+def _patched_init(self, window=20, scale=0.05, name_override=None):
+    _orig_init(self, window=window, scale=scale)
     if name_override:
         self.name = name_override
 

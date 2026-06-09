@@ -412,7 +412,7 @@ class TestThreeStrategyBacktest:
             initial_usdt=10_000.0,
             strategies=[
                 {"module": "strategies.momentum.MomentumStrategy",
-                 "params": {"window": 20, "scale": 0.05, "min_score": 0.15}},
+                 "params": {"window": 20, "scale": 0.05}},
                 {"module": "strategies.mean_reversion.MeanReversionStrategy",
                  "params": {"window": 20, "z_entry": 1.5, "z_threshold": 2.5}},
                 {"module": "strategies.funding_rate_arb.FundingRateArbStrategy",

@@ -114,7 +114,7 @@ def build_pipeline(bus, cache, account, btc_perp,
                    max_weight=0.10) -> tuple:
     """组装完整信号管道，返回事件收集列表。"""
     # 策略
-    strategy = MomentumStrategy(window=20, scale=0.05, min_score=0.15)
+    strategy = MomentumStrategy(window=20, scale=0.05)
     registry = PluginRegistry()
     registry.register(strategy)
 
