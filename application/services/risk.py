@@ -135,12 +135,17 @@ class RiskService:
             self._publish_close_order(event, instrument, close_side, close_qty)
             # 第二步：开新仓位（将在下一个信号周期自然触发）
             # 因为平仓后 current_size ≈ 0，下次信号计算 delta = target_size
-            log.info("翻仓分步: %s 先平仓 %s %.6f，新仓将在下次信号触发",
-                     sym, close_side.value, close_qty)
+            log.info("翻仓分步: %s 先平仓 %s %.6f (信号强度 %.3f)，新仓将在下次信号触发",
+                     sym, close_side.value, close_qty, float(abs(signal_score)))
             return
 
         # ── 3. 构建订单 ───────────────────────────────────────────────────────
         price: Decimal | None = self._cache.get(f"price:{sym}")
+
+        # 获取信号强度用于日志
+        signal_score = self._cache.get(f"signal_score:{sym}")
+        signal_str = f"signal={float(signal_score):+.3f}" if signal_score else "signal=N/A"
+
         is_buy = delta > 0
         order_side = Side.BUY if is_buy else Side.SELL
         order_qty = instrument.round_qty(abs(delta))
@@ -188,8 +193,8 @@ class RiskService:
                     order=final_order,
                 ).caused_by(event)
             )
-            log.debug("risk ✓  %s  qty=%.6f  side=%s",
-                      sym, final_order.qty, final_order.side.value)
+            log.info("risk ✓  %s  %s %.6f  %s",
+                     sym, final_order.side.value, final_order.qty, signal_str)
         else:
             self._bus.publish(
                 RiskRejectedEvent(
