@@ -45,10 +45,10 @@ monitor:
   critical_drawdown: 0.08   # 5% 熔断
 
 strategies:
-  - module: "strategies.momentum.MomentumStrategy"
-    params:
-      window:    30
-      scale:     0.002  # 降低敏感度：2% 价格变动触发强信号
+  # - module: "strategies.momentum.MomentumStrategy"
+  #   params:
+  #     window:    30
+  #     scale:     0.002  # 降低敏感度：2% 价格变动触发强信号
 
   - module: "strategies.mean_reversion.MeanReversionStrategy"
     params:
