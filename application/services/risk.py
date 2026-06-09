@@ -165,6 +165,7 @@ class RiskService:
             qty         = order_qty,
             order_type  = OrderType.MARKET,
             strategy_id = "",
+            leverage    = event.leverage,  # 从事件获取杠杆倍数
             limit_price = price,
             reduce_only = reduce_only,
         )
@@ -219,6 +220,7 @@ class RiskService:
             qty         = qty,
             order_type  = OrderType.MARKET,
             strategy_id = "",
+            leverage    = event.leverage,  # 从事件获取杠杆倍数
             limit_price = price,
             reduce_only = True,
         )
@@ -268,6 +270,10 @@ class RiskService:
         # 日内回撤（Phase 2 暂无，Phase 3 由 MonitorService 写入）
         daily_drawdown = self._cache.get(f"drawdown:{account_id}") or Decimal(0)
         
+        # ── 价格信息（市价单需要）────────────────────────────────────────────
+        # 从 cache 读取最新市场价格，供市价单计算名义价值
+        mark_price = self._cache.get(f"price:{symbol}")
+        
         # ── 预期收益信息(手续费保护)────────────────────────────────────────────
         # 从 cache 读取 PortfolioService 写入的预期收益率
         expected_return_pct = self._cache.get(f"expected_return:{symbol}")
@@ -281,5 +287,6 @@ class RiskService:
             extra         = {
                 "daily_drawdown": daily_drawdown,
                 "expected_return_pct": expected_return_pct,
+                "mark_price": mark_price,  # 新增：市场价格
             },
         )

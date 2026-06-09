@@ -149,6 +149,7 @@ class PortfolioService:
                         instrument   = event.instrument,
                         target_size  = target_size,
                         current_size = current_size,
+                        leverage     = self._leverage,  # 传递杠杆倍数
                     ).caused_by(event)
                 )
                 return
@@ -192,6 +193,7 @@ class PortfolioService:
                 instrument   = event.instrument,
                 target_size  = target_size,
                 current_size = current_size,
+                leverage     = self._leverage,  # 传递杠杆倍数
             ).caused_by(event)
         )
 

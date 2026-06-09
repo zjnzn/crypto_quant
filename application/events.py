@@ -92,6 +92,7 @@ class TargetPositionEvent(Event):
     instrument:   Instrument = None
     target_size:  Decimal    = Decimal(0)   # 带符号目标持仓量
     current_size: Decimal    = Decimal(0)   # 带符号当前持仓量
+    leverage:     int        = 1            # 目标杠杆倍数   # 带符号当前持仓量
 
 
 # ── 风控事件 ─────────────────────────────────────────────────────────────────

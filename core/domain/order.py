@@ -91,6 +91,7 @@ class Order:
     order_type:        OrderType    = OrderType.MARKET
     id:                str          = field(default_factory=lambda: str(uuid4()))
     strategy_id:       str          = ""
+    leverage:          int          = 1              # 订单杠杆倍数（开仓/加仓时使用）
     limit_price:       Decimal|None = None
     stop_price:        Decimal|None = None
     tif:               TimeInForce  = TimeInForce.GTC

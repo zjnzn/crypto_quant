@@ -22,6 +22,33 @@ from application.risk.pipeline import RiskMiddleware, Next
 log = logging.getLogger(__name__)
 
 
+
+def _get_estimated_price(order: Order, ctx: RiskContext) -> Decimal:
+    """
+    获取订单估算价格。
+    
+    优先级:
+      1. 订单的 limit_price（限价单）
+      2. 市场价格 mark_price（市价单，从 ctx.extra 获取）
+      3. 默认值 Decimal(1)（兜底，但不应该发生）
+    
+    ⚠️ 注意：市价单没有 limit_price，必须从市场数据获取价格。
+    """
+    if order.limit_price:
+        return order.limit_price
+    
+    # 从 RiskContext.extra 读取市场价格
+    mark_price = ctx.extra.get("mark_price")
+    if mark_price:
+        return Decimal(str(mark_price))
+    
+    # 兜底（不应该发生，RiskService 应该总是提供 mark_price）
+    log.warning(
+        "风控中间件无法获取价格: %s 无 limit_price 且 ctx.extra 无 mark_price，使用默认值 1",
+        order.instrument.symbol
+    )
+    return Decimal(1)
+
 class PositionLimitMiddleware(RiskMiddleware):
     """
     单标的保证金占用不超过账户净值的 max_weight。
@@ -53,11 +80,11 @@ class PositionLimitMiddleware(RiskMiddleware):
         delta = order.qty if order.side == Side.BUY else -order.qty
         new_size = cur_size + delta
 
-        # 用 limit_price 估算，无 limit_price 用 0（market order，偏保守）
-        est_price = order.limit_price or Decimal(1)
+        # 获取估算价格（支持市价单）
+        est_price = _get_estimated_price(order, ctx)
         if ctx.nav_usdt > 0:
-            # 获取杠杆倍数：优先从仓位取，新开仓用配置的默认值
-            leverage = cur.leverage if cur and cur.leverage > 0 else self._leverage
+            # 获取杠杆倍数：优先从订单取，其次仓位，最后默认值
+            leverage = order.leverage or (cur.leverage if cur and cur.leverage > 0 else self._leverage)
 
             # 保证金占用 = 名义价值 / 杠杆
             notional = abs(new_size * est_price)
@@ -73,7 +100,12 @@ class PositionLimitMiddleware(RiskMiddleware):
 
 
 class MaxLeverageMiddleware(RiskMiddleware):
-    """全局最大杠杆倍数检查。"""
+    """
+    全局最大杠杆倍数检查。
+    
+    检查订单使用的杠杆倍数，而非已有仓位的杠杆。
+    防止高杠杆开仓绕过风控。
+    """
     name = "max_leverage"
 
     def __init__(self, global_max: int = 10) -> None:
@@ -83,11 +115,13 @@ class MaxLeverageMiddleware(RiskMiddleware):
                 call_next: Next) -> RiskResult:
         if order.reduce_only:
             return call_next(order, ctx)
-
+        
+        # 优先使用订单杠杆，其次使用仓位杠杆
         cur = ctx.positions.get(order.instrument.symbol)
-        leverage = cur.leverage if cur else 1
-        allowed  = min(order.instrument.max_leverage, self._max)
-
+        leverage = order.leverage or (cur.leverage if cur else 1)
+        
+        allowed = min(order.instrument.max_leverage, self._max)
+        
         if leverage > allowed:
             return RiskResult.reject(
                 f"{order.instrument.symbol} 杠杆 {leverage}x "
@@ -131,27 +165,55 @@ class DrawdownMiddleware(RiskMiddleware):
 
 class FundingRateMiddleware(RiskMiddleware):
     """
-    资金费率过高时禁止开多仓（持多仓需持续支付资金费，侵蚀收益）。
-    对平仓单、空仓开仓单一律放行。
+    资金费率极端时限制开仓。
+    
+    规则:
+      - 高正资金费率(>max_positive) → 禁止开多（持多仓需持续支付资金费）
+      - 极端负资金费率(<-max_negative) → 禁止开空（持空仓需持续支付资金费）
+      - 平仓单一律放行
+    
+    示例:
+      rate = +0.5% → 多头付费给空头 → 禁止开多
+      rate = -0.5% → 空头付费给多头 → 禁止开空
     """
     name = "funding_rate"
 
-    def __init__(self, max_rate: float = 0.003) -> None:
-        """max_rate: 每8小时资金费率上限，默认 0.3%。"""
-        self._max = Decimal(str(max_rate))
+    def __init__(
+        self, 
+        max_positive: float = 0.003,   # 正资金费率上限 0.3%
+        max_negative: float = 0.003,   # 负资金费率下限 -0.3%
+    ) -> None:
+        """
+        max_positive: 每8小时正资金费率上限，超过则禁止开多
+        max_negative: 每8小时负资金费率下限，低于则禁止开空
+        """
+        self._max_positive = Decimal(str(max_positive))
+        self._max_negative = Decimal(str(max_negative))
 
     def process(self, order: Order, ctx: RiskContext,
                 call_next: Next) -> RiskResult:
-        if order.reduce_only or order.side == Side.SELL:
+        # 平仓单一律放行
+        if order.reduce_only:
             return call_next(order, ctx)
-
+        
         rate = ctx.funding_rates.get(order.instrument.symbol, Decimal(0))
-        if rate > self._max:
+        
+        # 开多仓：检查正资金费率
+        if order.side == Side.BUY and rate > self._max_positive:
             return RiskResult.reject(
                 f"{order.instrument.symbol} 资金费率 {rate:.4%}/8h "
-                f"超过阈值 {self._max:.4%}，禁止开多",
+                f"超过阈值 {self._max_positive:.4%}，禁止开多（持多仓需持续支付资金费）",
                 level="soft",   # soft：记录但不强制拒绝（策略可覆盖）
             )
+        
+        # 开空仓：检查负资金费率
+        if order.side == Side.SELL and rate < -self._max_negative:
+            return RiskResult.reject(
+                f"{order.instrument.symbol} 资金费率 {rate:.4%}/8h "
+                f"低于阈值 -{self._max_negative:.4%}，禁止开空（持空仓需持续支付资金费）",
+                level="soft",   # soft：记录但不强制拒绝（策略可覆盖）
+            )
+        
         return call_next(order, ctx)
 
 
@@ -161,7 +223,7 @@ class MinNotionalMiddleware(RiskMiddleware):
 
     def process(self, order: Order, ctx: RiskContext,
                 call_next: Next) -> RiskResult:
-        est_price = order.limit_price or Decimal(1)
+        est_price = _get_estimated_price(order, ctx)
         notional  = order.qty * est_price
         min_n     = order.instrument.min_notional
 
@@ -212,7 +274,7 @@ class MinRebalanceMiddleware(RiskMiddleware):
     def process(self, order: Order, ctx: RiskContext,
                 call_next: Next) -> RiskResult:
         # 1. 计算订单名义价值
-        est_price = order.limit_price or Decimal("1")
+        est_price = _get_estimated_price(order, ctx)
         order_notional = order.qty * est_price
         
         # 2. 获取当前持仓
@@ -246,6 +308,11 @@ class ExpectedProfitMiddleware(RiskMiddleware):
       - 手续费: 币安永续 0.02% (maker) / 0.04% (taker)
       - 滑点: 通常 0.01% ~ 0.05%
       - 总成本: 约 0.05% ~ 0.10%
+    
+    ⚠️ 重要警告:
+      策略自我报告的预期收益容易过度乐观，不能作为硬风控依据。
+      本中间件设置为 soft 级别，仅记录警告日志，不拒单。
+      策略可选择接受此风险继续下单。
     
     使用方式:
       1. 策略在 SignalEvent.meta 中传递 expected_return_pct
@@ -289,12 +356,13 @@ class ExpectedProfitMiddleware(RiskMiddleware):
         # 3. 计算最小要求收益
         min_required_pct = self._trading_cost_pct * self._profit_multiplier
         
-        # 4. 比较
+        # 4. 比较 - ⚠️ soft 级别，仅警告不拒单
         if expected_return_pct < min_required_pct:
-            return RiskResult.reject(
-                f"预期收益过低: {float(expected_return_pct)*100:.3f}% < "
-                f"最小要求 {float(min_required_pct)*100:.3f}% "
-                f"(成本{float(self._trading_cost_pct)*100:.3f}% × {float(self._profit_multiplier)}x安全系数)"
+            return RiskResult.warn(
+                f"预期收益可能过低: {float(expected_return_pct)*100:.3f}% < "
+                f"最小建议 {float(min_required_pct)*100:.3f}% "
+                f"(成本{float(self._trading_cost_pct)*100:.3f}% × {float(self._profit_multiplier)}x安全系数) "
+                f"— 策略自我报告的预期收益可能过度乐观，请谨慎评估"
             )
         
         return call_next(order, ctx)
