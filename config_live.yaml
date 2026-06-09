@@ -48,13 +48,13 @@ strategies:
   - module: "strategies.momentum.MomentumStrategy"
     params:
       window:    20
-      scale:     0.002  # 50x 杠杆：0.002×(5/50)=0.0002，保持信号-仓位映射不变
+      scale:     0.05  # 50x 杠杆：0.002×(5/50)=0.0002，保持信号-仓位映射不变
 
   - module: "strategies.mean_reversion.MeanReversionStrategy"
     params:
       window:      20
-      z_entry:     2.0    # 实盘 Z-score 阈值更保守
-      z_threshold: 3.0
+      z_entry:     3.0    # 实盘 Z-score 阈值更保守
+      z_threshold: 4.0
 
   # - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
   #   params:
