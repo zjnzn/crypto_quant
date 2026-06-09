@@ -37,8 +37,8 @@ risk:
   min_rebalance_pct:       0.01    # 最小调仓量 5% NAV,低于此拒绝下单
   trading_cost_pct:        0.0006  # 币安永续手续费+滑点:0.04%+0.02%=0.06%
   profit_multiplier:       2.0     # 预期收益必须≥2×成本(安全系数)→阈值0.12%
-  reversal_threshold:      0.80   # 翻仓最小信号强度,信号绝对值必须≥此值才允许翻仓
-  min_score:               0.60    # 开仓最小信号强度,信号绝对值必须≥此值才开新仓
+  reversal_threshold:      0.50   # 翻仓最小信号强度,信号绝对值必须≥此值才允许翻仓
+  min_score:               0.35    # 开仓最小信号强度,信号绝对值必须≥此值才开新仓
 
 monitor:
   warn_drawdown:     0.05   # 3% 告警
@@ -48,13 +48,13 @@ strategies:
   - module: "strategies.momentum.MomentumStrategy"
     params:
       window:    20
-      scale:     0.001  # scale 随杠杆调整：0.0020/5=0.0004，保持信号-仓位映射不变
+      scale:     0.0002  # 50x 杠杆：0.002×(5/50)=0.0002，保持信号-仓位映射不变
 
-  # - module: "strategies.mean_reversion.MeanReversionStrategy"
-  #   params:
-  #     window:      20
-  #     z_entry:     2.0    # 实盘 Z-score 阈值更保守
-  #     z_threshold: 3.0
+  - module: "strategies.mean_reversion.MeanReversionStrategy"
+    params:
+      window:      20
+      z_entry:     2.0    # 实盘 Z-score 阈值更保守
+      z_threshold: 3.0
 
   # - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
   #   params:
