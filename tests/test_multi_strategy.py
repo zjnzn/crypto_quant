@@ -296,8 +296,7 @@ class TestMultiStrategyPortfolio:
         def make_ctx1(sid):
             return StrategyContext("main", sid, SimClock(), cache1, acct1)
 
-        SignalService(bus1, cache1, [MomentumStrategy(window=5, scale=0.02,
-                      min_score=0.1)], make_ctx1)
+        SignalService(bus1, cache1, [MomentumStrategy(window=5, scale=0.02)], make_ctx1)
         PortfolioService(bus1, cache1, acct1, "main",
                          max_weight=0.10)
         bus1.subscribe(TargetPositionEvent, targets1.append)

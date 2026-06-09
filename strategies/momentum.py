@@ -7,13 +7,11 @@ strategies/momentum.py
   1. 维护每个标的的滚动收盘价窗口（长度 = window）
   2. 计算窗口内的累计收益率：ret = close[-1] / close[0] - 1
   3. 归一化为 [-1, 1] 分数：score = clip(ret / scale, -1, 1)
-  4. |score| < min_score 时返回空列表（无信号）
-  5. confidence = min(1, |ret| / (scale * 2))
+  4. confidence = min(1, |ret| / (scale * 2))
 
 参数：
   window    — 动量计算窗口长度（默认 20 根 K 线）
   scale     — 归一化基准收益率（默认 5%，超过则 score 趋近 ±1）
-  min_score — 最小信号阈值（默认 0.15，低于此值不发信号）
 """
 from __future__ import annotations
 
