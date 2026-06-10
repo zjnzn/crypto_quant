@@ -137,7 +137,7 @@ class PortfolioService:
         # 优先检查平仓阈值：信号低于阈值 → 完全平仓
         if abs_score < self._close_threshold:
             if has_position:
-                # 信号低于平仓阈值 → 完全平仓
+                # 有持仓 + 信号低于平仓阈值 → 完全平仓
                 target_size = Decimal(0)
                 delta = target_size - current_size
                 if abs(delta) < event.instrument.lot_size:
@@ -154,7 +154,7 @@ class PortfolioService:
                 )
                 return
             else:
-                # 无持仓且信号弱 → 不开仓
+                # 无持仓 + 信号低于开仓阈值 → 不开仓
                 target_size = Decimal(0)
                 delta = target_size - current_size
                 if abs(delta) < event.instrument.lot_size:
@@ -171,17 +171,31 @@ class PortfolioService:
                 )
                 return
 
-        # 正常开仓逻辑：检查 min_score
+        # 检查开仓阈值
         if abs_score < self._min_score:
             if has_position:
-                # 有持仓但信号弱 → 保持最低持仓（按 min_score 算）
+                # 有持仓 + 信号在 [close_threshold, min_score) → 保持最低持仓
                 abs_score = Decimal(str(self._min_score))
+                # 继续到下面的正常计算逻辑
             else:
-                # 无持仓且信号弱 → 不开仓
+                # 无持仓 + 信号低于开仓阈值 → 不开仓
                 target_size = Decimal(0)
                 delta = target_size - current_size
                 if abs(delta) < event.instrument.lot_size:
                     return
+
+                self._bus.publish(
+                    TargetPositionEvent(
+                        account_id   = self._account_id,
+                        instrument   = event.instrument,
+                        target_size  = target_size,
+                        current_size = current_size,
+                        leverage     = self._leverage,  # 传递杠杆倍数
+                    ).caused_by(event)
+                )
+                return
+
+        # 正常计算仓位：score × max_weight × leverage × NAV / price
 
                 self._bus.publish(
                     TargetPositionEvent(
