@@ -16,8 +16,9 @@ cache:
 
 execution:
   exchange: binance      # "paper" | "binance" | "okx"
-  # api_key:    "LixBa8EOAsAt7yVTaOMAG9hy9aasjE1xcrFwm4nXJj5aDPspIv5MYR6XAv4DZP7f"
-  # api_secret: "Uz9LXA82Byf9hhIFpjAs1nJJsWgtJIXgTnmDZHWt7rua4yeQSSNQVK7FzxwCo7Gv"
+  # 实盘密钥不要写入配置文件。请通过环境变量注入：
+  #   BINANCE_API_KEY
+  #   BINANCE_API_SECRET
   api_key:    "xAhuEBwlfBN0PmY52XWDxrVisdf14O5voNyPCeJm4qPFUKUynGDlXjWejz4OBl1I"
   api_secret: "BpkKYp8lOwimo73LwzbpNHIEFpoJ8XSZKLfGaZPhFy72rNzD427sutBKnkxzax0Q"
 
@@ -26,38 +27,39 @@ account:
   initial_usdt: 5000.0  # 仅用于回测初始化，实盘从交易所拉取
 
 risk:
-  max_weight:       0.02    # 单标的保证金占用上限（leverage 提高 → 降低 max_weight 保持敞口不变）
-  max_leverage:     50       # 全局最大杠杆（实盘建议保守）
-  leverage:         50       # 目标杠杆倍数（用于仓位计算）
-  max_drawdown:     0.08    # 5% 回撤熔断
+  max_weight:       0.005   # 单标的保证金占用上限（0.5%，20x杠杆=10%名义仓位）
+  max_leverage:     20       # 全局最大杠杆
+  leverage:         20       # 目标杠杆倍数（用于仓位计算）
+  max_drawdown:     0.08    # 8% 回撤熔断
   max_funding_rate: 0.003   # 0.3%/8h 资金费率上限
-  order_cooldown:   30.0     # 同标的两次下单最小间隔（秒，防止重复下单）
+  order_cooldown:   60.0     # 同标的两次下单最小间隔（秒）
 
   # ── 手续费保护框架 ─────────────────────────────────────────────────────
-  min_rebalance_pct:       0.01    # 最小调仓量 2% NAV,低于此拒绝下单
-  trading_cost_pct:        0.02  # 币安永续手续费+滑点:0.04%+0.02%=0.06%
-  profit_multiplier:       2.0     # 预期收益必须≥2×成本(安全系数)→阈值0.12%
-  min_score:               0.25    # 开仓最小信号强度,信号绝对值必须≥此值才开新仓
-  close_threshold:         0.10    # 平仓信号阈值,信号绝对值<此值时平仓
+  min_rebalance_pct:       0.01    # 最小调仓量 1% NAV,低于此拒绝下单
+  trading_cost_pct:        0.0006  # 币安永续手续费+滑点: 0.04%+0.02%=0.06%=0.0006
+  profit_multiplier:       2.0     # 预期收益必须≥2×成本
+  min_score:               0.35    # 开仓最小信号强度
+  close_threshold:         0.15    # 平仓信号阈值
 
 monitor:
   warn_drawdown:     0.05   # 3% 告警
   critical_drawdown: 0.08   # 5% 熔断
 
 strategies:
+  # 动量策略（BTC实盘推荐配置）
+  # 使用线性回归斜率，适合逐笔成交数据
   - module: "strategies.momentum.MomentumStrategy"
     params:
-      window:    30
-      scale:     0.002  # 降低敏感度：2% 价格变动触发强信号
+      window_sec: 300         # 5分钟时间窗口
+      slope_scale: 0.00002    # 斜率归一化基准（5分钟涨0.6%=满仓）
 
+  # 均值回归策略（暂不启用，先观察动量策略表现）
+  # 注意：MeanReversion当前基于成交笔数窗口，不适合aggTrade
+  # 需要改造为时间窗口后再启用
   # - module: "strategies.mean_reversion.MeanReversionStrategy"
   #   params:
-  #     window:      30
-  #     z_entry:     2.0    # Z-score 阈值
-  #     z_threshold: 3.0
-
-  # - module: "strategies.funding_rate_arb.FundingRateArbStrategy"
-  #   params:
-  #     min_rate:      0.001
-  #     max_rate:      0.005
-  #     cooldown_bars: 8
+  #     window:        1800    # 需改为时间窗口（秒）
+  #     z_entry:       2.2
+  #     z_threshold:   4.0
+  #     trend_filter:  false   # EMA基于笔数，暂时关闭
+  #     use_returns:   true

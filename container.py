@@ -164,6 +164,7 @@ def build(cfg: Config) -> System:
         cache      = cache,
         strategies = registry.all(),
         make_ctx   = make_ctx,
+        signal_throttle_sec = 1.0 if cfg.mode in ("live", "paper") else 0.0,
     )
     PortfolioService(
         bus            = bus,
