@@ -51,19 +51,12 @@ class RiskService:
         account:   AccountPort,
         cache:     CachePort,
         exchange:  ExecutionPort | None = None,
-        reversal_threshold: float = 0.50,  # 翻仓最小信号强度
     ) -> None:
         self._bus       = bus
         self._pipeline  = pipeline
         self._account   = account
         self._cache     = cache
         self._exchange  = exchange
-        self._reversal_threshold = Decimal(str(reversal_threshold))
-        self._bus      = bus
-        self._pipeline = pipeline
-        self._account  = account
-        self._cache    = cache
-        self._exchange = exchange
 
         bus.subscribe(TargetPositionEvent, self._on_target)
         log.info("RiskService 启动，中间件: %s",
@@ -111,32 +104,14 @@ class RiskService:
                       (real_current_size < 0 and event.target_size > 0)
 
         if is_reversal:
-            # ── 翻仓信号强度检查 ────────────────────────────────────────────────
-            # 翻仓需要更强的信号(避免频繁翻仓带来双倍手续费)
-            signal_score = self._cache.get(f"signal_score:{sym}")
-
-            if signal_score is None:
-                log.warning("翻仓检测: %s 无信号分数信息,跳过翻仓", sym)
-                return
-
-            signal_score = Decimal(str(signal_score))
-
-            # 检查信号绝对值是否足够强
-            if abs(signal_score) < self._reversal_threshold:
-                log.warning(
-                    "翻仓拒绝: %s 信号强度 %.3f < 阈值 %.3f,跳过翻仓",
-                    sym, float(abs(signal_score)), float(self._reversal_threshold)
-                )
-                return
-
             # 第一步：平掉当前仓位
             close_qty = instrument.round_qty(abs(real_current_size))
             close_side = Side.SELL if real_current_size > 0 else Side.BUY
             self._publish_close_order(event, instrument, close_side, close_qty)
             # 第二步：开新仓位（将在下一个信号周期自然触发）
             # 因为平仓后 current_size ≈ 0，下次信号计算 delta = target_size
-            log.info("翻仓分步: %s 先平仓 %s %.6f (信号强度 %.3f)，新仓将在下次信号触发",
-                     sym, close_side.value, close_qty, float(abs(signal_score)))
+            log.info("翻仓分步: %s 先平仓 %s %.6f，新仓将在下次信号触发",
+                     sym, close_side.value, close_qty)
             return
 
         # ── 3. 构建订单 ───────────────────────────────────────────────────────

@@ -46,8 +46,8 @@ class RiskConfig:
     min_rebalance_pct:       float = 0.05    # 最小调仓量(% NAV),低于此阈值拒绝下单
     trading_cost_pct:        float = 0.0007  # 单边交易成本(手续费+滑点),币安永续约0.07%
     profit_multiplier:       float = 3.0     # 预期收益安全系数,推荐2-3x
-    reversal_threshold:      float = 0.50    # 翻仓最小信号强度(信号绝对值必须≥此值)
     min_score:               float = 0.15    # 开仓最小信号强度(信号绝对值必须≥此值才开新仓)
+    close_threshold:         float = 0.10    # 平仓信号阈值(信号绝对值<此值时平仓)
 
 
 @dataclass

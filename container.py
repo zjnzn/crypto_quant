@@ -174,6 +174,7 @@ def build(cfg: Config) -> System:
         min_score      = cfg.risk.min_score,
         leverage       = cfg.risk.leverage,
         order_cooldown = cfg.risk.order_cooldown,
+        close_threshold = cfg.risk.close_threshold,
     )
     RiskService(
         bus       = bus,
@@ -181,7 +182,6 @@ def build(cfg: Config) -> System:
         account   = account_svc,
         cache     = cache,
         exchange  = exchange,
-        reversal_threshold = cfg.risk.reversal_threshold,
     )
     OMSService(
         bus      = bus,

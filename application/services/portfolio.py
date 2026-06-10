@@ -42,6 +42,7 @@ class PortfolioService:
         allow_short:    bool  = True,
         order_cooldown: float = 0.0,     # 两次同标的下单最小间隔（秒）
         leverage:       int   = 1,       # 目标杠杆倍数
+        close_threshold: float = 0.10,   # 平仓信号阈值(信号绝对值<此值时平仓)
     ) -> None:
         self._bus        = bus
         self._cache      = cache
@@ -52,6 +53,7 @@ class PortfolioService:
         self._allow_short    = allow_short
         self._order_cooldown = order_cooldown
         self._leverage       = leverage
+        self._close_threshold = close_threshold
 
         # (symbol, strategy_id) → SignalEvent
         self._signals: dict[tuple[str, str], SignalEvent] = {}
@@ -60,8 +62,8 @@ class PortfolioService:
 
         bus.subscribe(SignalEvent, self._on_signal)
         log.info("PortfolioService 启动  max_weight=%.0f%%  min_score=%.2f  "
-                 "short=%s  leverage=%dx",
-                 max_weight * 100, min_score, allow_short, leverage)
+                 "close_threshold=%.2f  short=%s  leverage=%dx",
+                 max_weight * 100, min_score, close_threshold, allow_short, leverage)
 
     def _on_signal(self, event: SignalEvent) -> None:
         sym = event.instrument.symbol
@@ -132,6 +134,44 @@ class PortfolioService:
             has_position = False
 
         # 计算目标仓位
+        # 优先检查平仓阈值：信号低于阈值 → 完全平仓
+        if abs_score < self._close_threshold:
+            if has_position:
+                # 信号低于平仓阈值 → 完全平仓
+                target_size = Decimal(0)
+                delta = target_size - current_size
+                if abs(delta) < event.instrument.lot_size:
+                    return
+
+                self._bus.publish(
+                    TargetPositionEvent(
+                        account_id   = self._account_id,
+                        instrument   = event.instrument,
+                        target_size  = target_size,
+                        current_size = current_size,
+                        leverage     = self._leverage,
+                    ).caused_by(event)
+                )
+                return
+            else:
+                # 无持仓且信号弱 → 不开仓
+                target_size = Decimal(0)
+                delta = target_size - current_size
+                if abs(delta) < event.instrument.lot_size:
+                    return
+
+                self._bus.publish(
+                    TargetPositionEvent(
+                        account_id   = self._account_id,
+                        instrument   = event.instrument,
+                        target_size  = target_size,
+                        current_size = current_size,
+                        leverage     = self._leverage,
+                    ).caused_by(event)
+                )
+                return
+
+        # 正常开仓逻辑：检查 min_score
         if abs_score < self._min_score:
             if has_position:
                 # 有持仓但信号弱 → 保持最低持仓（按 min_score 算）
